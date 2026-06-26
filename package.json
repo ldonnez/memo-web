@@ -1,0 +1,19 @@
+{
+  "name": "memo-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev-server.js",
+    "test": "node --test 'test/**/*.test.js'",
+    "format": "prettier --write '**/*.{js,html,css,md,json}'",
+    "format:check": "prettier --check '**/*.{js,html,css,md,json}'",
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix ."
+  },
+  "devDependencies": {
+    "eslint": "^10.5.0",
+    "globals": "^17.7.0",
+    "openpgp": "^6.3.1",
+    "prettier": "^3"
+  }
+}
