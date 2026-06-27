@@ -817,8 +817,7 @@
         .editor-header .actions {
           flex-shrink: 0;
         }
-        .editor-header .btn .label,
-        #editorStatus .label {
+        .editor-header .btn .label {
           display: none;
         }
         .btn {
@@ -902,13 +901,13 @@
               <button class="btn btn-sm" onclick="togglePreview()" id="previewToggle">
                 👁️ <span class="label">Preview</span>
               </button>
-              <button class="btn btn-sm btn-primary" onclick="saveNote()" id="saveBtn">
-                💾 <span class="label">Save</span>
-              </button>
             </div>
             <div class="actions">
               <button class="btn btn-sm" onclick="discardChanges()" id="discardBtn" style="display: none">
                 ↩️ <span class="label">Discard</span>
+              </button>
+              <button class="btn btn-sm btn-primary" onclick="saveNote()" id="saveBtn">
+                💾 <span class="label">Save</span>
               </button>
               <button class="btn btn-sm btn-danger" onclick="deleteNote()" id="deleteBtn">🗑️</button>
             </div>

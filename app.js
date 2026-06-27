@@ -466,7 +466,7 @@ function renderNoteList() {
     const active = state.currentFile && state.currentFile.path === n.path;
     const name = n.name.replace(/\.md\.gpg$/, '').replace(/\.gpg$/, '');
     items.push(`<div class="note-item ${active ? 'active' : ''}" data-path="${escAttr(n.path)}" data-type="file">
-      <span class="name">📄 ${escHtml(name)}</span>
+      <span class="name">📄 ${escHtml(name)}${n.dirty ? ' *' : ''}</span>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
         ${n.dirty ? '<span class="status-badge dirty">unsaved</span>' : ''}
         <span class="date">${n.date ? escHtml(formatDate(n.date)) : ''}</span>
@@ -847,13 +847,17 @@ function onEditorInput() {
       ? state.notes.map(n => (n.path === state.currentFile.path ? updatedFile : n))
       : state.notes,
   };
+  const filenameEl = document.getElementById('editorFilename');
+  const baseName = state.currentFile ? state.currentFile.name : '';
   if (dirty) {
     renderNoteList();
-    document.getElementById('editorStatus').innerHTML = '✏️ <span class="label">Unsaved changes</span>';
+    document.getElementById('editorStatus').textContent = '';
     document.getElementById('discardBtn').style.display = '';
+    filenameEl.textContent = baseName + ' *';
   } else {
     document.getElementById('editorStatus').textContent = '';
     document.getElementById('discardBtn').style.display = 'none';
+    filenameEl.textContent = baseName;
   }
   if (state.showPreview) updatePreview();
 }
