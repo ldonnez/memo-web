@@ -849,7 +849,7 @@ function onEditorInput() {
   };
   if (dirty) {
     renderNoteList();
-    document.getElementById('editorStatus').textContent = '📝 Unsaved changes';
+    document.getElementById('editorStatus').innerHTML = '✏️ <span class="label">Unsaved changes</span>';
     document.getElementById('discardBtn').style.display = '';
   } else {
     document.getElementById('editorStatus').textContent = '';
@@ -861,8 +861,15 @@ function onEditorInput() {
 function togglePreview() {
   state = { ...state, showPreview: !state.showPreview };
   document.getElementById('previewContainer').style.display = state.showPreview ? 'flex' : 'none';
-  document.getElementById('previewToggle').textContent = state.showPreview ? '✕ Preview' : '👁️ Preview';
-  if (state.showPreview) updatePreview();
+  document.getElementById('previewToggle').innerHTML = state.showPreview
+    ? '✕ <span class="label">Preview</span>'
+    : '👁️ <span class="label">Preview</span>';
+  if (state.showPreview) {
+    updatePreview();
+  } else {
+    document.getElementById('previewPane').innerHTML = '';
+  }
+  if (cm) setTimeout(() => cm.refresh(), 50);
 }
 
 function updatePreview() {
@@ -1121,6 +1128,7 @@ function syncHeaderH() {
 }
 window.addEventListener('load', syncHeaderH);
 window.addEventListener('resize', syncHeaderH);
+window.addEventListener('orientationchange', () => setTimeout(syncHeaderH, 100));
 
 // Close sidebar when selecting a note on mobile
 document.addEventListener('click', e => {

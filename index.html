@@ -65,6 +65,10 @@
         --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
         --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
         --header-h: 53px;
+        --sat: env(safe-area-inset-top, 0px);
+        --sab: env(safe-area-inset-bottom, 0px);
+        --sal: env(safe-area-inset-left, 0px);
+        --sar: env(safe-area-inset-right, 0px);
       }
       * {
         margin: 0;
@@ -90,6 +94,7 @@
         background: var(--surface);
         border-bottom: 1px solid var(--border);
         padding: 12px 20px;
+        padding-top: calc(12px + var(--sat));
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -159,6 +164,7 @@
         display: grid;
         grid-template-columns: 320px 1fr;
         height: calc(100vh - var(--header-h));
+        height: calc(100dvh - var(--header-h));
       }
 
       .sidebar {
@@ -507,6 +513,10 @@
         align-items: center;
         justify-content: center;
         padding: 20px;
+        padding-top: calc(20px + var(--sat));
+        padding-bottom: calc(20px + var(--sab));
+        padding-left: calc(20px + var(--sal));
+        padding-right: calc(20px + var(--sar));
       }
       .modal-overlay.open {
         display: flex;
@@ -616,8 +626,8 @@
       /* Toast notifications */
       .toast-container {
         position: fixed;
-        bottom: 20px;
-        right: 20px;
+        bottom: calc(20px + var(--sab));
+        right: calc(20px + var(--sar));
         z-index: 300;
         display: flex;
         flex-direction: column;
@@ -727,6 +737,7 @@
         .container {
           grid-template-columns: 1fr;
           height: calc(100vh - var(--header-h));
+          height: calc(100dvh - var(--header-h));
         }
         .sidebar {
           position: fixed;
@@ -735,6 +746,8 @@
           width: 300px;
           max-width: 85vw;
           height: calc(100vh - var(--header-h));
+          height: calc(100dvh - var(--header-h));
+          padding-bottom: var(--sab);
           z-index: 160;
           border-right: 1px solid var(--border);
           transition: left 0.2s ease;
@@ -742,6 +755,7 @@
         }
         header {
           padding: 6px 12px;
+          padding-top: calc(6px + var(--sat));
         }
         header h1 {
           font-size: 15px;
@@ -771,21 +785,41 @@
         .editor-body {
           flex-direction: column;
         }
+        .editor-body .CodeMirror,
+        .editor-body textarea {
+          font-size: 16px;
+        }
         #previewContainer {
           border-left: none !important;
           border-top: 1px solid var(--border);
-          max-height: 50vh;
+          flex: 10 !important;
         }
         .form-row {
           grid-template-columns: 1fr;
         }
         .modal {
           padding: 20px;
+          padding-top: calc(20px + var(--sat));
+          padding-bottom: calc(20px + var(--sab));
           margin: 10px;
+          max-height: calc(90vh - var(--sat) - var(--sab));
+          max-height: calc(90dvh - var(--sat) - var(--sab));
         }
         .editor-header {
-          flex-direction: column;
-          align-items: stretch;
+          flex-direction: row;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .editor-header .file-info {
+          flex: 1;
+          min-width: 0;
+        }
+        .editor-header .actions {
+          flex-shrink: 0;
+        }
+        .editor-header .btn .label,
+        #editorStatus .label {
+          display: none;
         }
         .btn {
           padding: 8px 16px;
@@ -865,13 +899,17 @@
             <div class="file-info">
               <span class="filename" id="editorFilename">untitled.md.gpg</span>
               <span id="editorStatus" style="font-size: 12px; color: var(--text-muted)"></span>
+              <button class="btn btn-sm" onclick="togglePreview()" id="previewToggle">
+                👁️ <span class="label">Preview</span>
+              </button>
+              <button class="btn btn-sm btn-primary" onclick="saveNote()" id="saveBtn">
+                💾 <span class="label">Save</span>
+              </button>
             </div>
             <div class="actions">
-              <button class="btn btn-sm" onclick="togglePreview()" id="previewToggle">👁️ Preview</button>
               <button class="btn btn-sm" onclick="discardChanges()" id="discardBtn" style="display: none">
-                ↩️ Discard
+                ↩️ <span class="label">Discard</span>
               </button>
-              <button class="btn btn-sm btn-primary" onclick="saveNote()" id="saveBtn">💾 Save</button>
               <button class="btn btn-sm btn-danger" onclick="deleteNote()" id="deleteBtn">🗑️</button>
             </div>
           </div>
@@ -1005,8 +1043,8 @@
       style="
         display: none;
         position: fixed;
-        bottom: 60px;
-        right: 20px;
+        bottom: calc(60px + var(--sab));
+        right: calc(20px + var(--sar));
         z-index: 400;
         background: var(--accent);
         color: #fff;
