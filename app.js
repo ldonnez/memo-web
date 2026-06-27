@@ -723,6 +723,7 @@ async function selectNote(path) {
   document.getElementById('placeholder').style.display = 'none';
   document.getElementById('editor').style.display = 'flex';
   document.getElementById('editorFilename').textContent = note.name;
+  document.getElementById('editorDirty').style.visibility = 'hidden';
   document.getElementById('editorStatus').textContent = 'Decrypting...';
   state = { ...state, originalContent: '' };
   setContent('');
@@ -848,16 +849,19 @@ function onEditorInput() {
       : state.notes,
   };
   const filenameEl = document.getElementById('editorFilename');
+  const dirtyEl = document.getElementById('editorDirty');
   const baseName = state.currentFile ? state.currentFile.name : '';
   if (dirty) {
     renderNoteList();
     document.getElementById('editorStatus').textContent = '';
-    document.getElementById('discardBtn').style.display = '';
-    filenameEl.textContent = baseName + ' *';
+    document.getElementById('discardBtn').style.visibility = 'visible';
+    filenameEl.textContent = baseName;
+    dirtyEl.style.visibility = 'visible';
   } else {
     document.getElementById('editorStatus').textContent = '';
-    document.getElementById('discardBtn').style.display = 'none';
+    document.getElementById('discardBtn').style.visibility = 'hidden';
     filenameEl.textContent = baseName;
+    dirtyEl.style.visibility = 'hidden';
   }
   if (state.showPreview) updatePreview();
 }
@@ -958,7 +962,7 @@ function discardChanges() {
 
   setContent(text);
   document.getElementById('editorStatus').textContent = '';
-  document.getElementById('discardBtn').style.display = 'none';
+  document.getElementById('discardBtn').style.visibility = 'hidden';
   updatePreview();
   renderNoteList();
   toast('Changes discarded', 'info');
@@ -1034,6 +1038,7 @@ async function newNote() {
   document.getElementById('placeholder').style.display = 'none';
   document.getElementById('editor').style.display = 'flex';
   document.getElementById('editorFilename').textContent = `${name.trim()}${ext}`;
+  document.getElementById('editorDirty').style.visibility = 'hidden';
   document.getElementById('editorStatus').textContent = '🆕 New note';
   setContent(`# ${name.trim()}\n\n`);
   document.getElementById('saveBtn').disabled = false;

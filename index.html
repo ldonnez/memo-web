@@ -279,6 +279,12 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      #editorDirty {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--orange);
+        flex-shrink: 0;
+      }
       .editor-header .actions {
         display: flex;
         gap: 6px;
@@ -820,6 +826,10 @@
         .editor-header .btn .label {
           display: none;
         }
+        .editor-header .btn.btn-sm {
+          padding: 4px 8px;
+          font-size: 14px;
+        }
         .btn {
           padding: 8px 16px;
           font-size: 14px;
@@ -896,14 +906,15 @@
         <div id="editor" style="display: none; flex-direction: column; flex: 1; overflow: hidden">
           <div class="editor-header">
             <div class="file-info">
-              <span class="filename" id="editorFilename">untitled.md.gpg</span>
+              <span class="filename" id="editorFilename">untitled.md.gpg</span
+              ><span id="editorDirty" style="visibility: hidden">*</span>
               <span id="editorStatus" style="font-size: 12px; color: var(--text-muted)"></span>
               <button class="btn btn-sm" onclick="togglePreview()" id="previewToggle">
                 👁️ <span class="label">Preview</span>
               </button>
             </div>
             <div class="actions">
-              <button class="btn btn-sm" onclick="discardChanges()" id="discardBtn" style="display: none">
+              <button class="btn btn-sm" onclick="discardChanges()" id="discardBtn" style="visibility: hidden">
                 ↩️ <span class="label">Discard</span>
               </button>
               <button class="btn btn-sm btn-primary" onclick="saveNote()" id="saveBtn">
