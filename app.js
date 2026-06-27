@@ -326,6 +326,10 @@ async function pullChanges() {
 
   if (state.currentFile && state.isDirty) {
     if (!confirm('Discard unsaved changes?')) return;
+    state = {
+      ...state,
+      notes: state.notes.map(n => (n.path === state.currentFile.path ? { ...n, dirty: false } : n)),
+    };
   }
 
   const currentPath = state.currentBrowsePath;
@@ -653,6 +657,10 @@ async function openNoteByPath(path) {
 async function navigateToDir(dirPath) {
   if (state.currentFile && state.isDirty) {
     if (!confirm('Discard unsaved changes?')) return;
+    state = {
+      ...state,
+      notes: state.notes.map(n => (n.path === state.currentFile.path ? { ...n, dirty: false } : n)),
+    };
     closeEditor();
   }
 
@@ -714,6 +722,10 @@ async function selectNote(path) {
   // If switching away from dirty note, warn but proceed
   if (state.currentFile && state.isDirty) {
     if (!confirm('Discard unsaved changes?')) return;
+    state = {
+      ...state,
+      notes: state.notes.map(n => (n.path === state.currentFile.path ? { ...n, dirty: false } : n)),
+    };
   }
 
   setUrlParams({ path: note.path });
@@ -852,7 +864,6 @@ function onEditorInput() {
   const dirtyEl = document.getElementById('editorDirty');
   const baseName = state.currentFile ? state.currentFile.name : '';
   if (dirty) {
-    renderNoteList();
     document.getElementById('editorStatus').textContent = '';
     document.getElementById('discardBtn').style.visibility = 'visible';
     filenameEl.textContent = baseName;
@@ -863,6 +874,7 @@ function onEditorInput() {
     filenameEl.textContent = baseName;
     dirtyEl.style.visibility = 'hidden';
   }
+  renderNoteList();
   if (state.showPreview) updatePreview();
 }
 
