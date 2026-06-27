@@ -1036,44 +1036,6 @@
       </div>
     </div>
 
-    <!-- Update banner -->
-    <div
-      id="updateBanner"
-      style="
-        display: none;
-        position: fixed;
-        bottom: calc(60px + var(--sab));
-        right: calc(20px + var(--sar));
-        z-index: 400;
-        background: var(--accent);
-        color: #fff;
-        padding: 10px 16px;
-        border-radius: 8px;
-        font-size: 13px;
-        cursor: pointer;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-        gap: 8px;
-        align-items: center;
-      "
-    >
-      <span>⬆ New version available</span>
-      <button
-        onclick="applyUpdate()"
-        style="
-          background: #fff;
-          color: var(--accent);
-          border: none;
-          border-radius: 4px;
-          padding: 4px 10px;
-          font-size: 12px;
-          font-weight: 600;
-          cursor: pointer;
-        "
-      >
-        Reload
-      </button>
-    </div>
-
     <!-- Toast container -->
     <div class="toast-container" id="toastContainer"></div>
 
@@ -1081,19 +1043,14 @@
     <script type="module">
       import { onUpdateAvailable, applyUpdate as applyUpdateFn } from './lib/update.js';
       if ('serviceWorker' in navigator) {
-        let swRegistration;
         navigator.serviceWorker
           .register('sw.js')
           .then(reg => {
-            swRegistration = reg;
             onUpdateAvailable(reg, () => {
-              document.getElementById('updateBanner').style.display = 'flex';
+              applyUpdateFn(reg);
             });
           })
           .catch(() => {});
-        globalThis.applyUpdate = function () {
-          applyUpdateFn(swRegistration);
-        };
         navigator.serviceWorker.addEventListener('controllerchange', () => {
           window.location.reload();
         });

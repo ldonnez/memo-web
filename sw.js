@@ -1,5 +1,5 @@
 /* global caches, clients, self, Response */
-const CACHE = 'memo-v1';
+const CACHE = 'memo-v2';
 
 const PRECACHE = [
   './',
@@ -56,8 +56,20 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Local assets and CDN — cache first
-  event.respondWith(cacheFirst(event.request));
+  // index.html — network first (always get latest deployed version)
+  if (url.pathname === '/' || url.pathname === '/index.html') {
+    event.respondWith(networkFirst(event.request));
+    return;
+  }
+
+  // CDN resources — cache first (versioned by URL, stable)
+  if (url.hostname.endsWith('cdn.jsdelivr.net') || url.hostname.endsWith('cdnjs.cloudflare.com')) {
+    event.respondWith(cacheFirst(event.request));
+    return;
+  }
+
+  // Local assets — stale-while-revalidate (serve cached instantly, refresh in background)
+  event.respondWith(staleWhileRevalidate(event.request));
 });
 
 async function cacheFirst(request) {
@@ -73,6 +85,20 @@ async function cacheFirst(request) {
   } catch {
     return new Response('Offline', { status: 503 });
   }
+}
+
+async function staleWhileRevalidate(request) {
+  const cached = await caches.match(request);
+  const fetchPromise = fetch(request)
+    .then(async res => {
+      if (res.ok) {
+        const cache = await caches.open(CACHE);
+        cache.put(request, res.clone());
+      }
+      return res;
+    })
+    .catch(() => cached);
+  return cached || fetchPromise;
 }
 
 async function networkFirst(request) {
