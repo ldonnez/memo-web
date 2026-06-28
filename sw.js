@@ -50,9 +50,9 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // GitHub API — network first
+  // GitHub API — network only (no cache to avoid stale "synced" messages)
   if (url.hostname === 'api.github.com') {
-    event.respondWith(networkFirst(event.request));
+    event.respondWith(fetch(event.request).catch(() => new Response('Offline', { status: 503 })));
     return;
   }
 

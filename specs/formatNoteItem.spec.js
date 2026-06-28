@@ -86,4 +86,23 @@ describe('formatNoteItem', () => {
     const pathMatch = dirty.match(/data-path="([^"]+)"/);
     assert.equal(pathMatch[1].includes('*'), false);
   });
+
+  it('shows offline dot when note.content is present', () => {
+    const note = makeNote({ content: 'base64encrypteddata' });
+    const html = formatNoteItem(note, null);
+    assert.match(html, /offline-dot/);
+  });
+
+  it('hides offline dot when note.content is absent', () => {
+    const note = makeNote({ content: null });
+    const html = formatNoteItem(note, null);
+    assert.doesNotMatch(html, /offline-dot/);
+  });
+
+  it('shows both unsaved badge and offline dot when applicable', () => {
+    const note = makeNote({ dirty: true, content: 'data' });
+    const html = formatNoteItem(note, null);
+    assert.match(html, /status-badge dirty/);
+    assert.match(html, /offline-dot/);
+  });
 });

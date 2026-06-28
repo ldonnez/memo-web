@@ -6,7 +6,6 @@ import {
   setUrlParams,
   clearUrlPath,
   escAttr,
-  formatDate,
   arrayToBase64,
   commitMsg,
   highlightCode,
@@ -14,7 +13,8 @@ import {
   computeDirtyState,
   markNoteClean,
   revertNote,
-  cleanNoteInList,
+  cacheNotesToLocalStorage,
+  loadCachedNotes,
 } from './lib/util.js';
 
 // ============= STATE =============
@@ -45,6 +45,41 @@ let state = {
   showPreview: false,
   connected: false,
 };
+
+const contentCache = new Map();
+const draftCache = new Map();
+
+function persistDrafts() {
+  try {
+    const obj = {};
+    for (const [k, v] of draftCache) obj[k] = v;
+    localStorage.setItem('memoweb_drafts', JSON.stringify(obj));
+  } catch (e) {
+    console.warn('Failed to persist drafts:', e);
+  }
+}
+
+function restoreDrafts() {
+  try {
+    const raw = localStorage.getItem('memoweb_drafts');
+    if (raw) {
+      const obj = JSON.parse(raw);
+      for (const [k, v] of Object.entries(obj)) draftCache.set(k, v);
+    }
+  } catch (e) {
+    console.warn('Failed to restore drafts:', e);
+  }
+}
+
+function saveDraft(path, content) {
+  draftCache.set(path, content);
+  persistDrafts();
+}
+
+function removeDraft(path) {
+  draftCache.delete(path);
+  persistDrafts();
+}
 
 // ============= CONFIG =============
 function loadConfig() {
@@ -208,6 +243,77 @@ async function ghListDir(path) {
   }
 }
 
+const CONTENT_CONCURRENCY = 5;
+
+async function fetchAllNotesContent(notes) {
+  const updated = [...notes];
+  const queue = updated.map((n, i) => ({ note: n, index: i })).filter(({ note }) => !note.content);
+
+  for (let start = 0; start < queue.length; start += CONTENT_CONCURRENCY) {
+    const batch = queue.slice(start, start + CONTENT_CONCURRENCY);
+    await Promise.all(
+      batch.map(async ({ note, index }) => {
+        try {
+          const data = await ghGetFile(note.path);
+          if (data) {
+            contentCache.set(note.path, data.content);
+            updated[index] = { ...note, content: data.content, sha: data.sha };
+          }
+        } catch (e) {
+          console.warn('Failed to prefetch content for', note.path, e.message);
+        }
+      }),
+    );
+  }
+  return updated;
+}
+
+async function walkAllDirsAndPrefetch(rootPath, fileExt) {
+  const dirs = [rootPath || ''];
+  const seen = new Set();
+
+  while (dirs.length) {
+    const dir = dirs.shift();
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+
+    try {
+      const entries = await ghListDir(dir);
+      if (!Array.isArray(entries)) continue;
+
+      const files = [];
+      for (const item of entries) {
+        if (item.type === 'dir') {
+          dirs.push(item.path);
+        } else if (item.type === 'file' && item.name.endsWith(fileExt)) {
+          files.push(item);
+        }
+      }
+
+      const notes = files.map(f => ({
+        name: f.name,
+        path: f.path,
+        sha: f.sha,
+        size: f.size,
+        date: f.last_modified || '',
+        dirty: false,
+        content: null,
+        decrypted: null,
+        originalText: '',
+      }));
+
+      const withContent = await fetchAllNotesContent(notes);
+      await cacheNotesToLocalStorage(
+        withContent,
+        entries.filter(e => e.type === 'dir'),
+        dir,
+      );
+    } catch (e) {
+      console.warn('walkAllDirsAndPrefetch error for', dir, e.message);
+    }
+  }
+}
+
 async function ghPutFile(path, content, message, sha) {
   const c = state.config;
   const encoded = encodeURIComponent(path);
@@ -293,20 +399,21 @@ async function connect() {
           sha: item.sha,
           size: item.size,
           date: item.last_modified || '',
-          dirty: false,
-          content: null,
-          decrypted: null,
+          dirty: draftCache.has(item.path) || false,
           originalText: '',
         }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     };
 
     state = { ...state, currentBrowsePath: path };
+    state = { ...state, notes: await fetchAllNotesContent(state.notes) };
 
     const total = state.notes.length;
     const dirCount = state.dirs.length;
     setConnectionStatus(`Connected · ${total} notes${dirCount ? ` · ${dirCount} folders` : ''}`, true);
     renderNoteList();
+    await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath);
+    setTimeout(() => walkAllDirsAndPrefetch(path, ext).catch(e => console.warn('background sync:', e.message)), 0);
     document.getElementById('newNoteBtn').disabled = false;
 
     if (state.currentFile) {
@@ -317,8 +424,25 @@ async function connect() {
     }
   } catch (e) {
     console.error('Connection error:', e);
-    setConnectionStatus(`Error: ${e.message}`, false);
-    toast(e.message, 'error');
+    const cached = await loadCachedNotes(state.currentBrowsePath);
+    if (cached && cached.notes && cached.notes.length) {
+      for (const n of cached.notes) {
+        if (n.content) contentCache.set(n.path, n.content);
+      }
+      state = {
+        ...state,
+        notes: cached.notes,
+        dirs: cached.dirs || [],
+        currentBrowsePath: cached.currentBrowsePath || '',
+      };
+      const total = state.notes.length;
+      const dirCount = state.dirs.length;
+      setConnectionStatus(`Offline · ${total} notes${dirCount ? ` · ${dirCount} folders` : ''}`, false);
+      renderNoteList();
+    } else {
+      setConnectionStatus(`Error: ${e.message}`, false);
+      toast(e.message, 'error');
+    }
   }
 }
 
@@ -330,7 +454,8 @@ async function pullChanges() {
   }
 
   if (state.currentFile && state.isDirty) {
-    if (!confirm('Discard unsaved changes?')) return;
+    toast('⚠️ Unsaved changes will be overwritten by remote', 'warning');
+    removeDraft(state.currentFile.path);
     state = {
       ...state,
       notes: state.notes.map(n => (n.path === state.currentFile.path ? { ...n, dirty: false } : n)),
@@ -352,19 +477,18 @@ async function pullChanges() {
           .map(i => ({ name: i.name, path: i.path }))
           .sort((a, b) => a.name.localeCompare(b.name)),
       };
+
       state = {
         ...state,
         notes: entries
-          .filter(i => i.type === 'file' && i.name.endsWith(ext))
-          .map(i => ({
-            name: i.name,
-            path: i.path,
-            sha: i.sha,
-            size: i.size,
-            date: i.last_modified || '',
-            dirty: false,
-            content: null,
-            decrypted: null,
+          .filter(item => item.type === 'file' && item.name.endsWith(ext))
+          .map(item => ({
+            name: item.name,
+            path: item.path,
+            sha: item.sha,
+            size: item.size,
+            date: item.last_modified || '',
+            dirty: draftCache.has(item.path) || false,
             originalText: '',
           }))
           .sort((a, b) => a.name.localeCompare(b.name)),
@@ -398,10 +522,15 @@ async function pullChanges() {
       }
     }
 
+    state = { ...state, notes: await fetchAllNotesContent(state.notes) };
+
     const total = state.notes.length;
     const dirCount = state.dirs.length;
     setConnectionStatus(`Synced · ${total} notes${dirCount ? ` · ${dirCount} folders` : ''}`, true);
     renderNoteList();
+    await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath);
+    const basePath = c.ghPath || '';
+    setTimeout(() => walkAllDirsAndPrefetch(basePath, ext).catch(e => console.warn('background sync:', e.message)), 0);
     toast('Synced with remote', 'info');
   } catch (e) {
     setConnectionStatus('Sync failed', state.connected);
@@ -653,11 +782,7 @@ async function openNoteByPath(path) {
 
 async function navigateToDir(dirPath) {
   if (state.currentFile && state.isDirty) {
-    if (!confirm('Discard unsaved changes?')) return;
-    state = {
-      ...state,
-      notes: state.notes.map(n => (n.path === state.currentFile.path ? { ...n, dirty: false } : n)),
-    };
+    saveDraft(state.currentFile.path, state.currentContent);
     closeEditor();
   }
 
@@ -690,9 +815,7 @@ async function navigateToDir(dirPath) {
           sha: item.sha,
           size: item.size,
           date: item.last_modified || '',
-          dirty: false,
-          content: null,
-          decrypted: null,
+          dirty: draftCache.has(item.path) || false,
           originalText: '',
         }))
         .sort((a, b) => a.name.localeCompare(b.name)),
@@ -701,13 +824,37 @@ async function navigateToDir(dirPath) {
     state = { ...state, currentBrowsePath: dirPath, currentFile: null, isDirty: false };
     closeEditor();
 
+    state = { ...state, notes: await fetchAllNotesContent(state.notes) };
+
     const total = state.notes.length;
     const dirCount = state.dirs.length;
     setConnectionStatus(`Connected · ${total} notes${dirCount ? ` · ${dirCount} folders` : ''}`, true);
     renderNoteList();
+    await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath);
   } catch (e) {
     console.error('Directory navigation error:', e);
-    toast(e.message, 'error');
+    const cached = await loadCachedNotes(dirPath || '');
+    if (cached && cached.notes && cached.notes.length) {
+      for (const n of cached.notes) {
+        if (n.content) contentCache.set(n.path, n.content);
+      }
+      state = {
+        ...state,
+        notes: cached.notes,
+        dirs: cached.dirs || [],
+        currentBrowsePath: cached.currentBrowsePath || '',
+        currentFile: null,
+        isDirty: false,
+      };
+      closeEditor();
+      const total = state.notes.length;
+      const dirCount = state.dirs.length;
+      setConnectionStatus(`Offline · ${total} notes${dirCount ? ` · ${dirCount} folders` : ''}`, false);
+      renderNoteList();
+    } else {
+      setConnectionStatus(`Error: ${e.message}`, false);
+      toast(e.message, 'error');
+    }
   }
 }
 
@@ -716,10 +863,8 @@ async function selectNote(path) {
   let note = state.notes.find(n => n.path === path);
   if (!note) return;
 
-  // If switching away from dirty note, warn but proceed
   if (state.currentFile && state.isDirty) {
-    if (!confirm('Discard unsaved changes?')) return;
-    state = { ...state, notes: cleanNoteInList(state.notes, state.currentFile.path) };
+    saveDraft(state.currentFile.path, state.currentContent);
   }
 
   setUrlParams({ path: note.path });
@@ -729,6 +874,27 @@ async function selectNote(path) {
   document.getElementById('placeholder').style.display = 'none';
   document.getElementById('editor').style.display = 'flex';
   document.getElementById('editorFilename').textContent = note.name;
+
+  const draft = draftCache.get(note.path);
+  if (draft !== undefined) {
+    setContent(draft);
+    state = {
+      ...state,
+      notes: state.notes.map(n => (n.path === note.path ? { ...n, dirty: true } : n)),
+      currentContent: draft,
+      originalContent: draft,
+      isDirty: true,
+    };
+    document.getElementById('editorDirty').style.visibility = 'visible';
+    document.getElementById('discardBtn').style.visibility = 'visible';
+    document.getElementById('editorStatus').textContent = '';
+    document.getElementById('saveBtn').disabled = false;
+    document.getElementById('deleteBtn').disabled = false;
+    updatePreview();
+    renderNoteList();
+    return;
+  }
+
   document.getElementById('editorDirty').style.visibility = 'hidden';
   document.getElementById('editorStatus').textContent = 'Decrypting...';
   state = { ...state, originalContent: '' };
@@ -758,6 +924,7 @@ async function selectNote(path) {
       ...clean,
       currentContent: decrypted,
     };
+    await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath);
     setContent(decrypted);
     document.getElementById('editorStatus').textContent = '';
     document.getElementById('saveBtn').disabled = false;
@@ -935,6 +1102,7 @@ function discardChanges() {
   if (!note.sha) {
     // New unsaved note — remove from sidebar and close
     if (!confirm('Discard this new note?')) return;
+    removeDraft(note.path);
     state = { ...state, notes: state.notes.filter(n => n.path !== note.path) };
     closeEditor();
     renderNoteList();
@@ -943,6 +1111,7 @@ function discardChanges() {
   }
 
   // Existing note — revert to last saved content
+  removeDraft(note.path);
   const result = revertNote(note, state.notes);
   state = { ...state, ...result };
 
@@ -969,9 +1138,12 @@ async function saveNote() {
 
     const result = await ghPutFile(note.path, encrypted, commitMsg(), note.sha);
     const clean = markNoteClean(note, state.notes, text);
+    removeDraft(note.path);
+    contentCache.set(note.path, b64);
     state = {
       ...state,
       ...clean,
+      notes: clean.notes.map(n => (n.path === note.path ? { ...n, content: b64 } : n)),
       currentFile: { ...clean.currentFile, sha: result.content.sha, content: b64 },
     };
 
@@ -994,7 +1166,7 @@ async function saveNote() {
 
 async function newNote() {
   if (state.currentFile && state.isDirty) {
-    if (!confirm('Discard unsaved changes?')) return;
+    saveDraft(state.currentFile.path, state.currentContent);
   }
 
   const name = prompt('Note name (e.g., my-note):');
@@ -1133,6 +1305,7 @@ document.addEventListener('click', e => {
 loadConfig();
 
 async function init() {
+  restoreDrafts();
   if (state.config.ghToken && state.config.ghOwner && state.config.ghRepo) {
     try {
       await connect();
