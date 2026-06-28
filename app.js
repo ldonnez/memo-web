@@ -10,6 +10,11 @@ import {
   arrayToBase64,
   commitMsg,
   highlightCode,
+  formatNoteItem,
+  computeDirtyState,
+  markNoteClean,
+  revertNote,
+  cleanNoteInList,
 } from './lib/util.js';
 
 // ============= STATE =============
@@ -467,15 +472,7 @@ function renderNoteList() {
 
   // Then files
   state.notes.forEach(n => {
-    const active = state.currentFile && state.currentFile.path === n.path;
-    const name = n.name.replace(/\.md\.gpg$/, '').replace(/\.gpg$/, '');
-    items.push(`<div class="note-item ${active ? 'active' : ''}" data-path="${escAttr(n.path)}" data-type="file">
-      <span class="name">📄 ${escHtml(name)}${n.dirty ? ' *' : ''}</span>
-      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
-        ${n.dirty ? '<span class="status-badge dirty">unsaved</span>' : ''}
-        <span class="date">${n.date ? escHtml(formatDate(n.date)) : ''}</span>
-      </div>
-    </div>`);
+    items.push(formatNoteItem(n, state.currentFile?.path));
   });
 
   list.innerHTML = items.join('');
@@ -722,10 +719,7 @@ async function selectNote(path) {
   // If switching away from dirty note, warn but proceed
   if (state.currentFile && state.isDirty) {
     if (!confirm('Discard unsaved changes?')) return;
-    state = {
-      ...state,
-      notes: state.notes.map(n => (n.path === state.currentFile.path ? { ...n, dirty: false } : n)),
-    };
+    state = { ...state, notes: cleanNoteInList(state.notes, state.currentFile.path) };
   }
 
   setUrlParams({ path: note.path });
@@ -758,14 +752,11 @@ async function selectNote(path) {
 
     const binary = Uint8Array.from(atob(note.content), c => c.charCodeAt(0));
     const decrypted = await decryptContent(state.config, binary);
-    const updatedNote = { ...note, decrypted, originalText: decrypted };
+    const clean = markNoteClean(note, state.notes, decrypted);
     state = {
       ...state,
-      notes: state.notes.map(n => (n.path === note.path ? updatedNote : n)),
-      currentFile: updatedNote,
-      originalContent: decrypted,
+      ...clean,
       currentContent: decrypted,
-      isDirty: false,
     };
     setContent(decrypted);
     document.getElementById('editorStatus').textContent = '';
@@ -849,21 +840,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function onEditorInput() {
   const newContent = getContent();
-  const dirty = newContent !== state.originalContent;
-  const updatedFile = state.currentFile ? { ...state.currentFile, dirty } : null;
-  state = {
-    ...state,
-    currentContent: newContent,
-    isDirty: dirty,
-    currentFile: updatedFile,
-    notes: state.currentFile
-      ? state.notes.map(n => (n.path === state.currentFile.path ? updatedFile : n))
-      : state.notes,
-  };
+  const result = computeDirtyState(state.notes, state.currentFile, newContent, state.originalContent);
+  state = { ...state, currentContent: newContent, ...result };
   const filenameEl = document.getElementById('editorFilename');
   const dirtyEl = document.getElementById('editorDirty');
   const baseName = state.currentFile ? state.currentFile.name : '';
-  if (dirty) {
+  if (result.isDirty) {
     document.getElementById('editorStatus').textContent = '';
     document.getElementById('discardBtn').style.visibility = 'visible';
     filenameEl.textContent = baseName;
@@ -961,18 +943,10 @@ function discardChanges() {
   }
 
   // Existing note — revert to last saved content
-  const text = note.originalText || '';
-  const updatedNote = { ...note, dirty: false, decrypted: text };
-  state = {
-    ...state,
-    originalContent: text,
-    currentContent: text,
-    isDirty: false,
-    currentFile: updatedNote,
-    notes: state.notes.map(n => (n.path === note.path ? updatedNote : n)),
-  };
+  const result = revertNote(note, state.notes);
+  state = { ...state, ...result };
 
-  setContent(text);
+  setContent(result.currentContent);
   document.getElementById('editorStatus').textContent = '';
   document.getElementById('discardBtn').style.visibility = 'hidden';
   updatePreview();
@@ -994,23 +968,16 @@ async function saveNote() {
     const b64 = typeof encrypted === 'string' ? btoa(encrypted) : arrayToBase64(encrypted);
 
     const result = await ghPutFile(note.path, encrypted, commitMsg(), note.sha);
-    const updatedNote = {
-      ...note,
-      sha: result.content.sha,
-      content: b64,
-      decrypted: text,
-      originalText: text,
-      dirty: false,
-    };
+    const clean = markNoteClean(note, state.notes, text);
     state = {
       ...state,
-      notes: state.notes.map(n => (n.path === note.path ? updatedNote : n)),
-      currentFile: updatedNote,
-      originalContent: text,
-      isDirty: false,
+      ...clean,
+      currentFile: { ...clean.currentFile, sha: result.content.sha, content: b64 },
     };
 
     toast('Note saved successfully', 'success');
+    document.getElementById('editorDirty').style.visibility = 'hidden';
+    document.getElementById('discardBtn').style.visibility = 'hidden';
     renderNoteList();
   } catch (e) {
     const isConflict =
