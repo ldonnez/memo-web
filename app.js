@@ -1010,7 +1010,6 @@ async function saveNote() {
       isDirty: false,
     };
 
-    document.getElementById('editorStatus').textContent = '✅ Saved';
     toast('Note saved successfully', 'success');
     renderNoteList();
   } catch (e) {
