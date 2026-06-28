@@ -1154,7 +1154,11 @@ window.addEventListener('orientationchange', () => setTimeout(syncHeaderH, 100))
 // Close sidebar when selecting a note on mobile
 document.addEventListener('click', e => {
   const sidebar = document.getElementById('sidebar');
-  if (window.innerWidth <= 768 && sidebar.classList.contains('open') && e.target.closest('.note-item')) {
+  if (
+    window.innerWidth <= 768 &&
+    sidebar.classList.contains('open') &&
+    e.target.closest('.note-item[data-type="file"]')
+  ) {
     toggleSidebar();
   }
 });
