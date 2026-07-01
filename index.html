@@ -734,16 +734,10 @@
       .sidebar-overlay.open {
         display: none;
       }
-      .sidebar-close {
-        display: none;
-      }
 
       @media (max-width: 768px) {
         .menu-btn {
           display: block;
-        }
-        .sidebar-close {
-          display: inline-flex;
         }
         .sidebar-overlay.open {
           display: block;
@@ -878,7 +872,6 @@
           <div style="display: flex; align-items: center; justify-content: space-between">
             <h2 id="sidebarTitle">Notes</h2>
             <div style="display: flex; gap: 4px">
-              <button class="btn btn-sm sidebar-close" onclick="toggleSidebar()" id="sidebarCloseBtn">✕</button>
               <button class="btn btn-sm btn-primary" onclick="newNote()" id="newNoteBtn" disabled>+ New</button>
             </div>
           </div>
