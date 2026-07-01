@@ -812,6 +812,15 @@
           border-top: 1px solid var(--border);
           flex: 10 !important;
         }
+        #editor:has(#previewContainer[style*='display: flex']) .editor-toolbar,
+        #editor:has(#previewContainer[style*='display: flex']) #editorContent,
+        #editor:has(#previewContainer[style*='display: flex']) .CodeMirror {
+          display: none;
+        }
+        #editor:has(#previewContainer[style*='display: flex']) #previewContainer {
+          flex: 1 !important;
+          border-top: none;
+        }
         .form-row {
           grid-template-columns: 1fr;
         }
