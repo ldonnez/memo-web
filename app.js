@@ -1287,6 +1287,7 @@ function syncHeaderH() {
   const h = document.querySelector('header').offsetHeight;
   document.documentElement.style.setProperty('--header-h', h + 'px');
 }
+document.addEventListener('DOMContentLoaded', syncHeaderH);
 window.addEventListener('load', syncHeaderH);
 window.addEventListener('resize', syncHeaderH);
 window.addEventListener('orientationchange', () => setTimeout(syncHeaderH, 100));
