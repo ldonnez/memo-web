@@ -1135,8 +1135,10 @@ async function saveNote() {
   if (!state.currentFile) return;
   const text = getContent();
   const btn = document.getElementById('saveBtn');
+  const origHTML = btn.innerHTML;
   btn.disabled = true;
-  btn.textContent = '⏳ Saving...';
+  btn.innerHTML =
+    '<span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;vertical-align:middle"><span class="spinner"></span></span> <span class="label">Save</span>';
 
   try {
     const encrypted = await encryptContent(state.config, text);
@@ -1168,7 +1170,7 @@ async function saveNote() {
     );
     btn.disabled = false;
   } finally {
-    btn.textContent = '💾 Save';
+    btn.innerHTML = origHTML;
   }
 }
 
