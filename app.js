@@ -1031,9 +1031,8 @@ function onEditorInput() {
 function togglePreview() {
   state = { ...state, showPreview: !state.showPreview };
   document.getElementById('previewContainer').style.display = state.showPreview ? 'flex' : 'none';
-  document.getElementById('previewToggle').innerHTML = state.showPreview
-    ? '✕ <span class="label">Preview</span>'
-    : '👁️ <span class="label">Preview</span>';
+  document.getElementById('previewToggle').disabled = state.showPreview;
+  document.getElementById('previewToggle').innerHTML = '👁️ <span class="label">Preview</span>';
   if (state.showPreview) {
     updatePreview();
   } else {
