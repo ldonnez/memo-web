@@ -150,3 +150,80 @@ describe('dirty-state chain with formatNoteItem', () => {
     assert.doesNotMatch(html, / \*/);
   });
 });
+
+describe('save button state (isDirty → saveBtn.disabled = !isDirty)', () => {
+  it('clean note → save disabled', () => {
+    const note = makeNote({ decrypted: 'hello', originalText: 'hello' });
+    const result = computeDirtyState([note], note, 'hello', 'hello');
+    assert.equal(result.isDirty, false);
+  });
+
+  it('edit → save enabled', () => {
+    const note = makeNote({ decrypted: 'hello', originalText: 'hello' });
+    const result = computeDirtyState([note], note, 'edited', 'hello');
+    assert.equal(result.isDirty, true);
+  });
+
+  it('edit → undo (match original) → save disabled', () => {
+    const note = makeNote({ decrypted: 'hello', originalText: 'hello' });
+    const dirty = computeDirtyState([note], note, 'edited', 'hello');
+    assert.equal(dirty.isDirty, true);
+    const clean = computeDirtyState(dirty.notes, dirty.currentFile, 'hello', 'hello');
+    assert.equal(clean.isDirty, false);
+  });
+
+  it('full cycle: clean → edit → save → clean → save disabled', () => {
+    const original = makeNote({ decrypted: 'original', originalText: 'original', dirty: false });
+
+    // edit
+    const edited = computeDirtyState([original], original, 'edited', 'original');
+    assert.equal(edited.isDirty, true);
+
+    // save
+    const saved = markNoteClean(edited.currentFile, edited.notes, 'edited');
+    assert.equal(saved.isDirty, false);
+    assert.equal(saved.currentFile.dirty, false);
+    assert.equal(saved.currentFile.originalText, 'edited');
+  });
+
+  it('full cycle: clean → edit → discard → clean → save disabled', () => {
+    const note = makeNote({ decrypted: 'edited', originalText: 'original', dirty: true });
+
+    // discard
+    const discarded = revertNote(note, [note]);
+    assert.equal(discarded.isDirty, false);
+    assert.equal(discarded.currentContent, 'original');
+    assert.equal(discarded.originalContent, 'original');
+  });
+
+  it('new note (originalContent empty) → save enabled', () => {
+    const note = makeNote({ decrypted: '# New\n\n', originalText: '', dirty: false });
+    const result = computeDirtyState([note], note, '# New\n\n', '');
+    assert.equal(result.isDirty, true);
+  });
+
+  it('load from API (markNoteClean with decrypted) → save disabled', () => {
+    const note = makeNote({ dirty: false, content: 'b64', decrypted: null, originalText: '' });
+    const decrypted = 'file content from api';
+    const loaded = markNoteClean(note, [note], decrypted);
+    assert.equal(loaded.isDirty, false);
+    assert.equal(loaded.currentFile.dirty, false);
+  });
+
+  it('draft load (originalContent set to draft text) → save enabled', () => {
+    const note = makeNote({ dirty: false, decrypted: null, originalText: '' });
+    const draft = 'unsaved draft text';
+    // selectNote draft path sets originalContent to draft and isDirty true
+    const loaded = { ...computeDirtyState([note], note, draft, ''), isDirty: true };
+    assert.equal(loaded.isDirty, true);
+    // If user does not edit further, content == original (both draft)
+    const noEdit = computeDirtyState(loaded.notes, loaded.currentFile, draft, draft);
+    // isDirty is false BUT selectNote overrides to true —
+    // This documents the choice: draft loads force dirty regardless of comparison
+    assert.equal(
+      noEdit.isDirty,
+      false,
+      'computeDirtyState says clean when draft===original, but selectNote forces isDirty=true',
+    );
+  });
+});

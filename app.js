@@ -927,7 +927,7 @@ async function selectNote(path) {
     await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath);
     setContent(decrypted);
     document.getElementById('editorStatus').textContent = '';
-    document.getElementById('saveBtn').disabled = false;
+    document.getElementById('saveBtn').disabled = true;
     document.getElementById('deleteBtn').disabled = false;
 
     updatePreview();
@@ -1012,6 +1012,7 @@ function onEditorInput() {
   const filenameEl = document.getElementById('editorFilename');
   const dirtyEl = document.getElementById('editorDirty');
   const baseName = state.currentFile ? state.currentFile.name : '';
+  document.getElementById('saveBtn').disabled = !result.isDirty;
   if (result.isDirty) {
     document.getElementById('editorStatus').textContent = '';
     document.getElementById('discardBtn').style.visibility = 'visible';
@@ -1150,6 +1151,7 @@ async function saveNote() {
     toast('Note saved successfully', 'success');
     document.getElementById('editorDirty').style.visibility = 'hidden';
     document.getElementById('discardBtn').style.visibility = 'hidden';
+    btn.disabled = true;
     renderNoteList();
   } catch (e) {
     const isConflict =
@@ -1158,8 +1160,8 @@ async function saveNote() {
       isConflict ? `⛔ Remote file changed — click 🔄 Sync to refresh, then save again` : `Save failed: ${e.message}`,
       'error',
     );
-  } finally {
     btn.disabled = false;
+  } finally {
     btn.textContent = '💾 Save';
   }
 }
