@@ -1095,6 +1095,13 @@ function insertMarkdown(before, after) {
   onEditorInput();
 }
 
+function insertTimestamp() {
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  insertMarkdown(ts, '');
+}
+
 function discardChanges() {
   const note = state.currentFile;
   if (!note) return;
@@ -1346,6 +1353,7 @@ window.selectNote = selectNote;
 window.closeEditor = closeEditor;
 window.togglePreview = togglePreview;
 window.insertMarkdown = insertMarkdown;
+window.insertTimestamp = insertTimestamp;
 window.discardChanges = discardChanges;
 window.saveNote = saveNote;
 window.newNote = newNote;

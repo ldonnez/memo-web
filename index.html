@@ -843,6 +843,7 @@
         .editor-toolbar {
           overflow-x: auto;
           flex-wrap: nowrap;
+          justify-content: center;
         }
       }
     </style>
@@ -933,6 +934,7 @@
             <button class="btn btn-sm" onclick="insertMarkdown('[', '](url)')">🔗</button>
             <button class="btn btn-sm" onclick="insertMarkdown('```\n', '\n```')">{}&lt;/&gt;</button>
             <button class="btn btn-sm" onclick="insertMarkdown('> ', '')">“</button>
+            <button class="btn btn-sm" onclick="insertTimestamp()" title="Insert date">📅</button>
             <button class="btn btn-sm" onclick="formatDoc()" title="Format document (Prettier)">✨</button>
           </div>
           <div class="editor-body">
