@@ -26,28 +26,52 @@
     <link rel="manifest" href="manifest.json" />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="icon.svg" />
-    <script src="https://cdn.jsdelivr.net/npm/openpgp@6.3.1/dist/openpgp.min.js"></script>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+    <link rel="modulepreload" href="app.js" />
+    <link rel="modulepreload" href="lib/util.js" />
+    <link rel="modulepreload" href="lib/crypto.js" />
+    <link rel="modulepreload" href="lib/format.js" />
+    <link rel="modulepreload" href="lib/update.js" />
+    <script src="https://cdn.jsdelivr.net/npm/openpgp@6.3.1/dist/openpgp.min.js" crossorigin="anonymous"></script>
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.0/build/styles/github-dark.min.css"
     />
-    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.0/build/highlight.min.js"></script>
+    <script
+      src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.0/build/highlight.min.js"
+      crossorigin="anonymous"
+    ></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/lib/codemirror.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/theme/material-darker.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/theme/material.css" />
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/lib/codemirror.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/markdown/markdown.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/javascript/javascript.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/xml/xml.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/css/css.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/htmlmixed/htmlmixed.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/python/python.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/shell/shell.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/yaml/yaml.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/sql/sql.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/lua/lua.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/addon/edit/matchbrackets.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/lib/codemirror.js" crossorigin="anonymous"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/markdown/markdown.js"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/javascript/javascript.js"
+      crossorigin="anonymous"
+    ></script>
+    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/xml/xml.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/css/css.js" crossorigin="anonymous"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/htmlmixed/htmlmixed.js"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/python/python.js"
+      crossorigin="anonymous"
+    ></script>
+    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/shell/shell.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/yaml/yaml.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/sql/sql.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/lua/lua.js" crossorigin="anonymous"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/addon/edit/matchbrackets.js"
+      crossorigin="anonymous"
+    ></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js" crossorigin="anonymous"></script>
     <style>
       :root {
         --bg: #0d1117;
