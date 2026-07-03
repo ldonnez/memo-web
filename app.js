@@ -1121,6 +1121,12 @@ let searchMarks = [];
 let searchCurrentMark = null;
 let searchInPreviewMode = false;
 let savedPreviewHTML = null;
+let searchDebounce = null;
+
+function debouncedSearch(query, forcePreview) {
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(() => doSearch(query, forcePreview), 200);
+}
 
 function toggleSearch() {
   const el = document.getElementById('editorSearch');
@@ -1267,28 +1273,32 @@ function selectSearchMatch(index) {
 }
 
 function searchNext() {
+  clearTimeout(searchDebounce);
   selectSearchMatch(searchIndex + 1);
 }
 
 function searchPrev() {
+  clearTimeout(searchDebounce);
   selectSearchMatch(searchIndex - 1);
 }
 
 function clearSearch() {
+  clearTimeout(searchDebounce);
+  searchDebounce = null;
   if (savedPreviewHTML) {
     const pane = document.getElementById('previewPane');
     if (pane) pane.innerHTML = savedPreviewHTML;
     savedPreviewHTML = null;
   }
-  if (searchCurrentMark) {
-    searchCurrentMark.clear();
-    searchCurrentMark = null;
+  if (cm) {
+    cm.setCursor(cm.getCursor());
+    cm.getAllMarks().forEach(m => m.clear());
   }
-  searchMarks.forEach(m => m.clear());
   searchMarks = [];
   searchMatches = [];
   searchIndex = -1;
   searchInPreviewMode = false;
+  document.querySelectorAll('.search-count').forEach(el => (el.textContent = ''));
 }
 
 function discardChanges() {
@@ -1617,6 +1627,7 @@ window.toggleSidebar = toggleSidebar;
 window.sidebarSearch = sidebarSearch;
 window.toggleSearch = toggleSearch;
 window.togglePreviewSearch = togglePreviewSearch;
+window.debouncedSearch = debouncedSearch;
 window.doSearch = doSearch;
 window.searchNext = searchNext;
 window.searchPrev = searchPrev;

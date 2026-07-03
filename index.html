@@ -931,6 +931,9 @@
         #previewSearchInput {
           font-size: 16px !important;
         }
+        #searchInput {
+          font-size: 16px;
+        }
       }
     </style>
   </head>
@@ -974,7 +977,8 @@
           ></div>
         </div>
         <input
-          type="search"
+          type="text"
+          inputmode="search"
           id="sidebarSearch"
           placeholder="Filter notes…"
           oninput="sidebarSearch(this.value)"
@@ -1049,10 +1053,11 @@
           </div>
           <div class="editor-search" id="editorSearch" style="display: none">
             <input
-              type="search"
+              type="text"
+              inputmode="search"
               id="searchInput"
               placeholder="Search in note…"
-              oninput="doSearch(this.value)"
+              oninput="debouncedSearch(this.value)"
               onkeydown="
                 if (event.key === 'Enter') {
                   event.shiftKey ? searchPrev() : searchNext();
@@ -1114,7 +1119,8 @@
                 "
               >
                 <input
-                  type="search"
+                  type="text"
+                  inputmode="search"
                   id="previewSearchInput"
                   placeholder="Search in preview…"
                   style="
@@ -1125,10 +1131,10 @@
                     border-radius: var(--radius);
                     background: var(--bg);
                     color: var(--text);
-                    font-size: 13px;
+                    font-size: 16px;
                     outline: none;
                   "
-                  oninput="doSearch(this.value, true)"
+                  oninput="debouncedSearch(this.value, true)"
                   onkeydown="
                     if (event.key === 'Enter') {
                       event.shiftKey ? searchPrev() : searchNext();
