@@ -15,6 +15,7 @@ import {
   revertNote,
   cacheNotesToLocalStorage,
   loadCachedNotes,
+  findMatchRanges,
 } from './lib/util.js';
 
 // ============= STATE =============
@@ -1057,6 +1058,10 @@ function updatePreview() {
   const text = getContent();
   preview.innerHTML = renderMarkdown(text);
   savedPreviewHTML = null;
+  if (hasHighlights()) {
+    CSS.highlights.delete('search-highlight');
+    CSS.highlights.delete('search-current');
+  }
 }
 
 function renderMarkdown(text) {
@@ -1122,6 +1127,16 @@ let searchCurrentMark = null;
 let searchInPreviewMode = false;
 let savedPreviewHTML = null;
 let searchDebounce = null;
+let searchCountEls = null;
+
+function getSearchCountEls() {
+  if (!searchCountEls) searchCountEls = document.querySelectorAll('.search-count');
+  return searchCountEls;
+}
+
+function hasHighlights() {
+  return !!(globalThis.CSS && CSS.highlights);
+}
 
 function debouncedSearch(query, forcePreview) {
   clearTimeout(searchDebounce);
@@ -1140,7 +1155,7 @@ function toggleSearch() {
     const input = document.getElementById('searchInput');
     input.value = '';
     input.focus();
-    document.querySelectorAll('.search-count').forEach(el => (el.textContent = ''));
+    getSearchCountEls().forEach(el => (el.textContent = ''));
     clearSearch();
   }
 }
@@ -1156,7 +1171,7 @@ function togglePreviewSearch() {
     const input = document.getElementById('previewSearchInput');
     input.value = '';
     input.focus();
-    document.querySelectorAll('.search-count').forEach(el => (el.textContent = ''));
+    getSearchCountEls().forEach(el => (el.textContent = ''));
     clearSearch();
   }
 }
@@ -1164,7 +1179,7 @@ function togglePreviewSearch() {
 function doSearch(query, forcePreview) {
   clearSearch();
   if (!query || !cm) {
-    document.querySelectorAll('.search-count').forEach(el => (el.textContent = ''));
+    getSearchCountEls().forEach(el => (el.textContent = ''));
     return;
   }
   const preview = document.getElementById('previewContainer');
@@ -1178,66 +1193,90 @@ function doSearch(query, forcePreview) {
 
 function searchInEditor(query) {
   const text = cm.getValue();
-  const q = query.toLowerCase();
-  const len = q.length;
+  const matches = findMatchRanges(text, query);
   searchMatches = [];
-  let idx = 0;
-  while (idx < text.length) {
-    const pos = text.toLowerCase().indexOf(q, idx);
-    if (pos === -1) break;
-    const from = cm.posFromIndex(pos);
-    const to = cm.posFromIndex(pos + len);
+  for (const m of matches) {
+    const from = cm.posFromIndex(m.from);
+    const to = cm.posFromIndex(m.to);
     searchMatches.push({ from, to });
-    idx = pos + 1;
+    searchMarks.push(cm.markText(from, to, { className: 'search-match' }));
   }
-  searchMatches.forEach(m => {
-    searchMarks.push(cm.markText(m.from, m.to, { className: 'search-match' }));
-  });
   if (searchMatches.length) {
     searchIndex = 0;
     selectSearchMatch(0);
   } else {
-    document.querySelectorAll('.search-count').forEach(el => (el.textContent = '0 results'));
+    getSearchCountEls().forEach(el => (el.textContent = '0 results'));
   }
 }
 
 function searchInPreview(query) {
   const pane = document.getElementById('previewPane');
-  savedPreviewHTML = pane.innerHTML;
+  if (!query) {
+    if (hasHighlights()) {
+      CSS.highlights.delete('search-highlight');
+      CSS.highlights.delete('search-current');
+    }
+    searchMatches = [];
+    getSearchCountEls().forEach(el => (el.textContent = ''));
+    return;
+  }
   const q = query.toLowerCase();
   const len = q.length;
   searchMatches = [];
+  const ranges = [];
   const walker = document.createTreeWalker(pane, NodeFilter.SHOW_TEXT, null, false);
-  const textNodes = [];
-  let node;
-  while ((node = walker.nextNode())) textNodes.push(node);
-  textNodes.forEach(tn => {
-    const lower = tn.textContent.toLowerCase();
-    let start = 0;
-    const parts = [];
-    let lastEnd = 0;
-    while (start < lower.length) {
-      const at = lower.indexOf(q, start);
-      if (at === -1) break;
-      if (at > lastEnd) parts.push(document.createTextNode(tn.textContent.slice(lastEnd, at)));
-      const span = document.createElement('span');
-      span.className = 'search-match';
-      span.textContent = tn.textContent.slice(at, at + len);
-      parts.push(span);
-      searchMatches.push({ span });
-      lastEnd = at + len;
-      start = at + 1;
-    }
-    if (lastEnd < tn.textContent.length) parts.push(document.createTextNode(tn.textContent.slice(lastEnd)));
-    if (parts.length) {
-      const parent = tn.parentNode;
-      parts.forEach(el => parent.insertBefore(el, tn));
-      parent.removeChild(tn);
-    }
-  });
-  if (!searchMatches.length) {
-    document.querySelectorAll('.search-count').forEach(el => (el.textContent = '0 results'));
+
+  if (hasHighlights()) {
+    CSS.highlights.delete('search-highlight');
+    CSS.highlights.delete('search-current');
     savedPreviewHTML = null;
+    let node;
+    while ((node = walker.nextNode())) {
+      const text = node.textContent;
+      const lower = text.toLowerCase();
+      let idx = 0;
+      while ((idx = lower.indexOf(q, idx)) !== -1) {
+        const range = document.createRange();
+        range.setStart(node, idx);
+        range.setEnd(node, idx + len);
+        ranges.push(range);
+        idx += 1;
+      }
+    }
+    if (ranges.length) {
+      const highlight = new Highlight();
+      for (const range of ranges) highlight.add(range);
+      CSS.highlights.set('search-highlight', highlight);
+    }
+  } else {
+    // <mark> fallback for browsers without CSS Highlight API
+    savedPreviewHTML = pane.innerHTML;
+    let node;
+    while ((node = walker.nextNode())) {
+      const text = node.textContent;
+      const lower = text.toLowerCase();
+      const textNodeRanges = [];
+      let idx = 0;
+      while ((idx = lower.indexOf(q, idx)) !== -1) {
+        const range = document.createRange();
+        range.setStart(node, idx);
+        range.setEnd(node, idx + len);
+        textNodeRanges.push(range);
+        idx += 1;
+      }
+      // Apply marks last-to-first to preserve index validity
+      for (let i = textNodeRanges.length - 1; i >= 0; i--) {
+        const mark = document.createElement('mark');
+        mark.className = 'search-match';
+        textNodeRanges[i].surroundContents(mark);
+      }
+      ranges.push(...textNodeRanges);
+    }
+  }
+
+  searchMatches = ranges;
+  if (!searchMatches.length) {
+    getSearchCountEls().forEach(el => (el.textContent = '0 results'));
     return;
   }
   searchIndex = 0;
@@ -1248,14 +1287,23 @@ function selectSearchMatch(index) {
   if (!searchMatches.length) return;
   searchIndex = (index + searchMatches.length) % searchMatches.length;
   if (searchInPreviewMode) {
-    const spans = searchMatches.map(m => m.span);
-    spans.forEach(s => {
-      if (s) s.classList.remove('search-match-current');
-    });
-    const span = spans[searchIndex];
-    if (span) {
-      span.classList.add('search-match-current');
-      span.scrollIntoView({ block: 'center' });
+    if (hasHighlights()) {
+      CSS.highlights.delete('search-current');
+      const range = searchMatches[searchIndex];
+      if (range) {
+        CSS.highlights.set('search-current', new Highlight(range));
+        const pane = document.getElementById('previewPane');
+        const rect = range.getBoundingClientRect();
+        const paneRect = pane.getBoundingClientRect();
+        pane.scrollTop += rect.top - paneRect.top - paneRect.height / 2;
+      }
+    } else {
+      document.querySelectorAll('.search-match-current').forEach(el => el.classList.remove('search-match-current'));
+      const marks = document.querySelectorAll('.search-match');
+      if (marks[searchIndex]) {
+        marks[searchIndex].classList.add('search-match-current');
+        marks[searchIndex].scrollIntoView({ block: 'center' });
+      }
     }
   } else {
     if (searchCurrentMark) {
@@ -1267,9 +1315,7 @@ function selectSearchMatch(index) {
     searchCurrentMark = cm.markText(m.from, m.to, { className: 'search-match-current' });
     cm.scrollIntoView(m.from, 100);
   }
-  document
-    .querySelectorAll('.search-count')
-    .forEach(el => (el.textContent = `${searchIndex + 1} of ${searchMatches.length}`));
+  getSearchCountEls().forEach(el => (el.textContent = `${searchIndex + 1} of ${searchMatches.length}`));
 }
 
 function searchNext() {
@@ -1285,6 +1331,10 @@ function searchPrev() {
 function clearSearch() {
   clearTimeout(searchDebounce);
   searchDebounce = null;
+  if (hasHighlights()) {
+    CSS.highlights.delete('search-highlight');
+    CSS.highlights.delete('search-current');
+  }
   if (savedPreviewHTML) {
     const pane = document.getElementById('previewPane');
     if (pane) pane.innerHTML = savedPreviewHTML;
@@ -1298,7 +1348,7 @@ function clearSearch() {
   searchMatches = [];
   searchIndex = -1;
   searchInPreviewMode = false;
-  document.querySelectorAll('.search-count').forEach(el => (el.textContent = ''));
+  getSearchCountEls().forEach(el => (el.textContent = ''));
 }
 
 function discardChanges() {
