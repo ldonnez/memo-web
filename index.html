@@ -321,6 +321,40 @@
         font-size: 12px;
         padding: 3px 10px;
       }
+      .editor-search {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 20px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+        flex-shrink: 0;
+      }
+      .editor-search input {
+        flex: 1;
+        min-width: 0;
+        padding: 4px 8px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--bg);
+        color: var(--text);
+        font-size: 13px;
+        outline: none;
+      }
+      .editor-search input:focus {
+        border-color: var(--accent);
+      }
+      .editor-search .search-count {
+        font-size: 12px;
+        color: var(--text-muted);
+        white-space: nowrap;
+        min-width: 36px;
+        text-align: center;
+      }
+      .editor-search .btn {
+        font-size: 11px;
+        padding: 2px 8px;
+      }
 
       .editor-body {
         flex: 1;
@@ -359,6 +393,14 @@
       }
       .editor-body .CodeMirror-focused .CodeMirror-selected {
         background: rgba(88, 166, 255, 0.3);
+      }
+      .editor-body .search-match {
+        background: rgba(255, 255, 0, 0.35) !important;
+        border-radius: 2px;
+      }
+      .editor-body .search-match-current {
+        background: rgba(88, 166, 255, 0.45) !important;
+        border-radius: 2px;
       }
       .CodeMirror span.cm-comment {
         color: #8b949e;
@@ -862,7 +904,24 @@
         .editor-toolbar {
           overflow-x: auto;
           flex-wrap: nowrap;
-          justify-content: center;
+          justify-content: space-between;
+          padding: 6px 0;
+        }
+        .editor-toolbar .btn {
+          padding: 4px 8px;
+          font-size: 14px;
+        }
+        .editor-search {
+          padding: 4px 8px;
+          gap: 4px;
+        }
+        .editor-search input {
+          font-size: 14px;
+          padding: 4px 6px;
+        }
+        .editor-search .btn {
+          padding: 4px 6px;
+          font-size: 13px;
         }
       }
     </style>
@@ -955,6 +1014,24 @@
             <button class="btn btn-sm" onclick="insertMarkdown('> ', '')">“</button>
             <button class="btn btn-sm" onclick="insertTimestamp()" title="Insert date">📅</button>
             <button class="btn btn-sm" onclick="formatDoc()" title="Format document (Prettier)">✨</button>
+            <button class="btn btn-sm" onclick="toggleSearch()" title="Search in note">🔍</button>
+          </div>
+          <div class="editor-search" id="editorSearch" style="display: none">
+            <input
+              type="search"
+              id="searchInput"
+              placeholder="Search in note…"
+              oninput="doSearch(this.value)"
+              onkeydown="
+                if (event.key === 'Enter') {
+                  event.shiftKey ? searchPrev() : searchNext();
+                }
+              "
+            />
+            <span id="searchCount" class="search-count"></span>
+            <button class="btn btn-sm" onclick="searchPrev()" title="Previous">▲</button>
+            <button class="btn btn-sm" onclick="searchNext()" title="Next">▼</button>
+            <button class="btn btn-sm" onclick="toggleSearch()" title="Close">✕</button>
           </div>
           <div class="editor-body">
             <textarea id="editorContent" placeholder="Start writing..."></textarea>
@@ -980,7 +1057,87 @@
                 "
               >
                 <span style="font-size: 12px; color: var(--text-muted); font-weight: 600">Preview</span>
-                <button class="btn btn-sm" onclick="togglePreview()" style="padding: 2px 10px">✕ Close</button>
+                <div style="display: flex; align-items: center; gap: 6px">
+                  <button
+                    class="btn btn-sm"
+                    onclick="togglePreviewSearch()"
+                    title="Search in preview"
+                    style="padding: 2px 8px"
+                  >
+                    🔍
+                  </button>
+                  <button class="btn btn-sm" onclick="togglePreview()" style="padding: 2px 10px">✕ Close</button>
+                </div>
+              </div>
+              <div
+                class="previewSearch"
+                id="previewSearch"
+                style="
+                  display: none;
+                  padding: 4px 12px;
+                  background: var(--surface);
+                  border-bottom: 1px solid var(--border);
+                  flex-shrink: 0;
+                  align-items: center;
+                  gap: 6px;
+                "
+              >
+                <input
+                  type="search"
+                  id="previewSearchInput"
+                  placeholder="Search in preview…"
+                  style="
+                    flex: 1;
+                    min-width: 0;
+                    padding: 4px 8px;
+                    border: 1px solid var(--border);
+                    border-radius: var(--radius);
+                    background: var(--bg);
+                    color: var(--text);
+                    font-size: 13px;
+                    outline: none;
+                  "
+                  oninput="doSearch(this.value, true)"
+                  onkeydown="
+                    if (event.key === 'Enter') {
+                      event.shiftKey ? searchPrev() : searchNext();
+                    }
+                  "
+                />
+                <span
+                  class="search-count"
+                  style="
+                    font-size: 12px;
+                    color: var(--text-muted);
+                    white-space: nowrap;
+                    min-width: 36px;
+                    text-align: center;
+                  "
+                ></span>
+                <button
+                  class="btn btn-sm"
+                  onclick="searchPrev()"
+                  title="Previous"
+                  style="font-size: 11px; padding: 2px 8px"
+                >
+                  ▲
+                </button>
+                <button
+                  class="btn btn-sm"
+                  onclick="searchNext()"
+                  title="Next"
+                  style="font-size: 11px; padding: 2px 8px"
+                >
+                  ▼
+                </button>
+                <button
+                  class="btn btn-sm"
+                  onclick="togglePreviewSearch()"
+                  title="Close"
+                  style="font-size: 11px; padding: 2px 8px"
+                >
+                  ✕
+                </button>
               </div>
               <div class="preview" id="previewPane" style="flex: 1; overflow-y: auto"></div>
             </div>
