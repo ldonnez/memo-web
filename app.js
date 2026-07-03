@@ -683,11 +683,13 @@ function formatDoc() {
     return;
   }
   const text = cm.getValue(),
-    cursor = cm.getCursor();
+    cursor = cm.getCursor(),
+    scrollInfo = cm.getScrollInfo();
   Promise.resolve(prettier.format(text, { parser: 'markdown', plugins: [window.prettierPlugins.markdown] })).then(
     function (formatted) {
       cm.setValue(formatted);
-      cm.setCursor(cursor);
+      cm.setCursor(cursor, null, { scroll: false });
+      cm.scrollTo(scrollInfo.left, scrollInfo.top);
       onEditorInput();
     },
   );
