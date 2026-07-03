@@ -1010,8 +1010,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (state.currentFile) toggleSearch();
     }
     if (e.key === 'Escape') {
-      const searchEl = document.getElementById('editorSearch');
-      if (searchEl && searchEl.style.display !== 'none') toggleSearch();
+      const editorSearch = document.getElementById('editorSearch');
+      const previewSearch = document.getElementById('previewSearch');
+      if (editorSearch && editorSearch.style.display !== 'none') {
+        toggleSearch();
+      } else if (previewSearch && previewSearch.style.display !== 'none') {
+        togglePreviewSearch();
+      }
     }
   });
 });
@@ -1057,11 +1062,7 @@ function updatePreview() {
   const preview = document.getElementById('previewPane');
   const text = getContent();
   preview.innerHTML = renderMarkdown(text);
-  savedPreviewHTML = null;
-  if (hasHighlights()) {
-    CSS.highlights.delete('search-highlight');
-    CSS.highlights.delete('search-current');
-  }
+  clearPreviewHighlights();
 }
 
 function renderMarkdown(text) {
@@ -1125,7 +1126,6 @@ let searchIndex = -1;
 let searchMarks = [];
 let searchCurrentMark = null;
 let searchInPreviewMode = false;
-let savedPreviewHTML = null;
 let searchDebounce = null;
 let searchCountEls = null;
 
@@ -1138,9 +1138,20 @@ function hasHighlights() {
   return !!(globalThis.CSS && CSS.highlights);
 }
 
+function clearPreviewHighlights() {
+  const pane = document.getElementById('previewPane');
+  if (pane) {
+    pane.querySelectorAll('mark.search-match').forEach(m => m.replaceWith(m.textContent));
+  }
+  if (hasHighlights()) {
+    CSS.highlights.set('search-highlight', new Highlight());
+    CSS.highlights.set('search-current', new Highlight());
+  }
+}
+
 function debouncedSearch(query, forcePreview) {
   clearTimeout(searchDebounce);
-  searchDebounce = setTimeout(() => doSearch(query, forcePreview), 200);
+  searchDebounce = setTimeout(() => doSearch(query, forcePreview), 300);
 }
 
 function toggleSearch() {
@@ -1212,10 +1223,7 @@ function searchInEditor(query) {
 function searchInPreview(query) {
   const pane = document.getElementById('previewPane');
   if (!query) {
-    if (hasHighlights()) {
-      CSS.highlights.delete('search-highlight');
-      CSS.highlights.delete('search-current');
-    }
+    clearPreviewHighlights();
     searchMatches = [];
     getSearchCountEls().forEach(el => (el.textContent = ''));
     return;
@@ -1227,9 +1235,7 @@ function searchInPreview(query) {
   const walker = document.createTreeWalker(pane, NodeFilter.SHOW_TEXT, null, false);
 
   if (hasHighlights()) {
-    CSS.highlights.delete('search-highlight');
-    CSS.highlights.delete('search-current');
-    savedPreviewHTML = null;
+    clearPreviewHighlights();
     let node;
     while ((node = walker.nextNode())) {
       const text = node.textContent;
@@ -1250,7 +1256,6 @@ function searchInPreview(query) {
     }
   } else {
     // <mark> fallback for browsers without CSS Highlight API
-    savedPreviewHTML = pane.innerHTML;
     let node;
     while ((node = walker.nextNode())) {
       const text = node.textContent;
@@ -1288,7 +1293,7 @@ function selectSearchMatch(index) {
   searchIndex = (index + searchMatches.length) % searchMatches.length;
   if (searchInPreviewMode) {
     if (hasHighlights()) {
-      CSS.highlights.delete('search-current');
+      CSS.highlights.set('search-current', new Highlight());
       const range = searchMatches[searchIndex];
       if (range) {
         CSS.highlights.set('search-current', new Highlight(range));
@@ -1331,15 +1336,7 @@ function searchPrev() {
 function clearSearch() {
   clearTimeout(searchDebounce);
   searchDebounce = null;
-  if (hasHighlights()) {
-    CSS.highlights.delete('search-highlight');
-    CSS.highlights.delete('search-current');
-  }
-  if (savedPreviewHTML) {
-    const pane = document.getElementById('previewPane');
-    if (pane) pane.innerHTML = savedPreviewHTML;
-    savedPreviewHTML = null;
-  }
+  clearPreviewHighlights();
   if (cm) {
     cm.setCursor(cm.getCursor());
     cm.getAllMarks().forEach(m => m.clear());
