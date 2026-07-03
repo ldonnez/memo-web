@@ -1472,6 +1472,68 @@ function toggleTheme() {
   }
 }
 
+function sidebarSearch(query) {
+  const q = query.toLowerCase();
+  const list = document.getElementById('noteList');
+
+  // Remove any previously injected cross-dir results
+  list.querySelectorAll('.note-item.search-injected').forEach(el => el.remove());
+
+  // Filter visible items
+  const items = list.querySelectorAll('.note-item:not(.search-injected)');
+  const isParent = el => el.querySelector('.name')?.textContent.trim() === '🔙 ..';
+  items.forEach(el => {
+    if (!q) {
+      el.style.display = '';
+      return;
+    }
+    if (isParent(el)) {
+      el.style.display = 'none';
+      return;
+    }
+    const name = el.querySelector('.name');
+    el.style.display = name && name.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+
+  if (!q) return;
+
+  // Search across cached notes from all directories
+  const visiblePaths = new Set();
+  list.querySelectorAll('.note-item[data-type="file"]').forEach(el => {
+    const p = el.getAttribute('data-path');
+    if (p) visiblePaths.add(p);
+  });
+
+  const extra = [];
+  contentCache.forEach((val, path) => {
+    if (visiblePaths.has(path)) return;
+    const name = path
+      .split('/')
+      .pop()
+      .replace(/\.md\.gpg$/, '')
+      .replace(/\.gpg$/, '');
+    if (name.toLowerCase().includes(q)) {
+      extra.push({ path, name });
+    }
+  });
+
+  if (extra.length) {
+    const frag = document.createDocumentFragment();
+    extra.forEach(n => {
+      const dir = n.path.split('/').slice(0, -1).join('/');
+      const div = document.createElement('div');
+      div.className = 'note-item search-injected';
+      div.setAttribute('data-path', n.path);
+      div.setAttribute('data-type', 'file');
+      div.style.cursor = 'pointer';
+      div.innerHTML = `<span class="name">📄 ${escHtml(n.name)}</span><span style="font-size:11px;color:var(--text-muted)">${escHtml(dir)}</span>`;
+      div.onclick = () => openNoteByPath(n.path);
+      frag.appendChild(div);
+    });
+    list.appendChild(frag);
+  }
+}
+
 function toggleSidebar() {
   const sidebar = document.getElementById('sidebar');
   const overlay = document.getElementById('sidebarOverlay');
@@ -1552,6 +1614,7 @@ window.deleteNote = deleteNote;
 window.toast = toast;
 window.toggleTheme = toggleTheme;
 window.toggleSidebar = toggleSidebar;
+window.sidebarSearch = sidebarSearch;
 window.toggleSearch = toggleSearch;
 window.togglePreviewSearch = togglePreviewSearch;
 window.doSearch = doSearch;

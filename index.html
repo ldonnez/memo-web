@@ -923,6 +923,11 @@
           padding: 4px 6px;
           font-size: 13px;
         }
+        #sidebarSearch {
+          margin: 6px 12px 8px;
+          font-size: 14px;
+          padding: 8px 10px;
+        }
       }
     </style>
   </head>
@@ -965,6 +970,29 @@
             "
           ></div>
         </div>
+        <input
+          type="search"
+          id="sidebarSearch"
+          placeholder="Filter notes…"
+          oninput="sidebarSearch(this.value)"
+          onkeydown="
+            if (event.key === 'Escape') {
+              this.value = '';
+              sidebarSearch('');
+            }
+          "
+          style="
+            margin: 4px 16px 8px;
+            padding: 6px 10px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--bg);
+            color: var(--text);
+            font-size: 13px;
+            outline: none;
+            flex-shrink: 0;
+          "
+        />
         <div class="note-list" id="noteList">
           <div class="empty-state">
             <div class="icon">📝</div>
