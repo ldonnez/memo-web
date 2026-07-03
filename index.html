@@ -1044,8 +1044,20 @@
             <button class="btn btn-sm" onclick="insertMarkdown('### ', '')">H</button>
             <button class="btn btn-sm" onclick="insertMarkdown('- ', '')">•</button>
             <button class="btn btn-sm" onclick="toggleTaskOnLine()">☑</button>
-            <button class="btn btn-sm" onclick="insertMarkdown('[', '](url)')">🔗</button>
-            <button class="btn btn-sm" onclick="insertMarkdown('```\n', '\n```')">{}&lt;/&gt;</button>
+            <button
+              class="btn btn-sm"
+              onclick="insertMarkdown('[', '](url)')"
+              style="padding: 3px 6px; font-size: 11px"
+            >
+              🔗
+            </button>
+            <button
+              class="btn btn-sm"
+              onclick="insertMarkdown('```\n', '\n```')"
+              style="padding: 3px 6px; font-size: 11px"
+            >
+              &lt;/&gt;
+            </button>
             <button class="btn btn-sm" onclick="insertMarkdown('> ', '')">“</button>
             <button class="btn btn-sm" onclick="insertTimestamp()" title="Insert date">📅</button>
             <button class="btn btn-sm" onclick="formatDoc()" title="Format document (Prettier)">✨</button>
