@@ -1139,14 +1139,9 @@ function hasHighlights() {
 }
 
 function clearPreviewHighlights() {
-  const pane = document.getElementById('previewPane');
-  if (pane) {
-    pane.querySelectorAll('mark.search-match').forEach(m => m.replaceWith(m.textContent));
-  }
-  if (hasHighlights()) {
-    CSS.highlights.set('search-highlight', new Highlight());
-    CSS.highlights.set('search-current', new Highlight());
-  }
+  try {
+    CSS.highlights.clear();
+  } catch {}
 }
 
 function debouncedSearch(query, forcePreview) {
