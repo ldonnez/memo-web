@@ -756,10 +756,12 @@ function toggleTaskOnLine() {
     const newCheck = m[2] === 'x' ? ' ' : 'x';
     const newLine = line.replace(/(\[)[ x](\])/, '$1' + newCheck + '$2');
     cm.replaceRange(newLine, { line: cursor.line, ch: 0 }, { line: cursor.line, ch: line.length });
+    cm.focus();
     onEditorInput();
   } else {
     cm.replaceRange('- [ ] ', { line: cursor.line, ch: 0 });
     cm.setCursor({ line: cursor.line, ch: 6 });
+    cm.focus();
     onEditorInput();
   }
 }
