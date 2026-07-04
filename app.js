@@ -22,6 +22,53 @@ import {
 let cm = null;
 let taskIdx = 0;
 
+function byId(id) {
+  return document.getElementById(id);
+}
+
+function parseEntries(entries, ext) {
+  return {
+    dirs: entries
+      .filter(i => i.type === 'dir')
+      .map(i => ({ name: i.name, path: i.path }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    notes: entries
+      .filter(i => i.type === 'file' && i.name.endsWith(ext))
+      .map(i => ({
+        name: i.name,
+        path: i.path,
+        sha: i.sha,
+        size: i.size,
+        date: i.last_modified || '',
+        dirty: draftCache.has(i.path) || false,
+        originalText: '',
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  };
+}
+
+function buildStatusText(total, dirCount) {
+  return `${total} notes${dirCount ? ` · ${dirCount} folders` : ''}`;
+}
+
+async function loadFromCache(path, extraState) {
+  const cached = await loadCachedNotes(path || '');
+  if (!cached || !cached.notes || !cached.notes.length) return false;
+  for (const n of cached.notes) {
+    if (n.content) contentCache.set(n.path, n.content);
+  }
+  state = {
+    ...state,
+    notes: cached.notes,
+    dirs: cached.dirs || [],
+    currentBrowsePath: cached.currentBrowsePath || '',
+    ...extraState,
+  };
+  setConnectionStatus(`Offline · ${buildStatusText(state.notes.length, state.dirs.length)}`, false);
+  renderNoteList();
+  return true;
+}
+
 function getContent() {
   return cm ? cm.getValue() : document.getElementById('editorContent')?.value || '';
 }
@@ -375,47 +422,19 @@ async function connect() {
       console.warn('Unexpected response from GitHub API, expected array, got:', entries);
       setConnectionStatus('Connected', true);
       renderNoteList();
-      document.getElementById('newNoteBtn').disabled = false;
+      byId('newNoteBtn').disabled = false;
       return;
     }
 
-    state = {
-      ...state,
-      dirs: entries
-        .filter(item => item.type === 'dir')
-        .map(item => ({
-          name: item.name,
-          path: item.path,
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    };
-
-    state = {
-      ...state,
-      notes: entries
-        .filter(item => item.type === 'file' && item.name.endsWith(ext))
-        .map(item => ({
-          name: item.name,
-          path: item.path,
-          sha: item.sha,
-          size: item.size,
-          date: item.last_modified || '',
-          dirty: draftCache.has(item.path) || false,
-          originalText: '',
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    };
-
-    state = { ...state, currentBrowsePath: path };
+    const { dirs, notes } = parseEntries(entries, ext);
+    state = { ...state, dirs, notes, currentBrowsePath: path };
     state = { ...state, notes: await fetchAllNotesContent(state.notes) };
 
-    const total = state.notes.length;
-    const dirCount = state.dirs.length;
-    setConnectionStatus(`Connected · ${total} notes${dirCount ? ` · ${dirCount} folders` : ''}`, true);
+    setConnectionStatus(`Connected · ${buildStatusText(state.notes.length, state.dirs.length)}`, true);
     renderNoteList();
     await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath);
     setTimeout(() => walkAllDirsAndPrefetch(path, ext).catch(e => console.warn('background sync:', e.message)), 0);
-    document.getElementById('newNoteBtn').disabled = false;
+    byId('newNoteBtn').disabled = false;
 
     if (state.currentFile) {
       const stillExists = state.notes.find(n => n.path === state.currentFile.path);
@@ -425,22 +444,7 @@ async function connect() {
     }
   } catch (e) {
     console.error('Connection error:', e);
-    const cached = await loadCachedNotes(state.currentBrowsePath);
-    if (cached && cached.notes && cached.notes.length) {
-      for (const n of cached.notes) {
-        if (n.content) contentCache.set(n.path, n.content);
-      }
-      state = {
-        ...state,
-        notes: cached.notes,
-        dirs: cached.dirs || [],
-        currentBrowsePath: cached.currentBrowsePath || '',
-      };
-      const total = state.notes.length;
-      const dirCount = state.dirs.length;
-      setConnectionStatus(`Offline · ${total} notes${dirCount ? ` · ${dirCount} folders` : ''}`, false);
-      renderNoteList();
-    } else {
+    if (!(await loadFromCache(state.currentBrowsePath))) {
       setConnectionStatus(`Error: ${e.message}`, false);
       toast(e.message, 'error');
     }
@@ -471,29 +475,8 @@ async function pullChanges() {
   try {
     const entries = await ghListDir(currentPath || '');
     if (Array.isArray(entries)) {
-      state = {
-        ...state,
-        dirs: entries
-          .filter(i => i.type === 'dir')
-          .map(i => ({ name: i.name, path: i.path }))
-          .sort((a, b) => a.name.localeCompare(b.name)),
-      };
-
-      state = {
-        ...state,
-        notes: entries
-          .filter(item => item.type === 'file' && item.name.endsWith(ext))
-          .map(item => ({
-            name: item.name,
-            path: item.path,
-            sha: item.sha,
-            size: item.size,
-            date: item.last_modified || '',
-            dirty: draftCache.has(item.path) || false,
-            originalText: '',
-          }))
-          .sort((a, b) => a.name.localeCompare(b.name)),
-      };
+      const { dirs, notes } = parseEntries(entries, ext);
+      state = { ...state, dirs, notes };
       renderNoteList();
     }
 
@@ -525,9 +508,7 @@ async function pullChanges() {
 
     state = { ...state, notes: await fetchAllNotesContent(state.notes) };
 
-    const total = state.notes.length;
-    const dirCount = state.dirs.length;
-    setConnectionStatus(`Synced · ${total} notes${dirCount ? ` · ${dirCount} folders` : ''}`, true);
+    setConnectionStatus(`Synced · ${buildStatusText(state.notes.length, state.dirs.length)}`, true);
     renderNoteList();
     await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath);
     const basePath = c.ghPath || '';
@@ -802,61 +783,20 @@ async function navigateToDir(dirPath) {
     }
 
     const ext = c.fileExt || '.md.gpg';
-    state = {
-      ...state,
-      dirs: entries
-        .filter(item => item.type === 'dir')
-        .map(item => ({ name: item.name, path: item.path }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    };
-
-    state = {
-      ...state,
-      notes: entries
-        .filter(item => item.type === 'file' && item.name.endsWith(ext))
-        .map(item => ({
-          name: item.name,
-          path: item.path,
-          sha: item.sha,
-          size: item.size,
-          date: item.last_modified || '',
-          dirty: draftCache.has(item.path) || false,
-          originalText: '',
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    };
-
-    state = { ...state, currentBrowsePath: dirPath, currentFile: null, isDirty: false };
+    const { dirs, notes } = parseEntries(entries, ext);
+    state = { ...state, dirs, notes, currentBrowsePath: dirPath, currentFile: null, isDirty: false };
     closeEditor();
 
     state = { ...state, notes: await fetchAllNotesContent(state.notes) };
 
-    const total = state.notes.length;
-    const dirCount = state.dirs.length;
-    setConnectionStatus(`Connected · ${total} notes${dirCount ? ` · ${dirCount} folders` : ''}`, true);
+    setConnectionStatus(`Connected · ${buildStatusText(state.notes.length, state.dirs.length)}`, true);
     renderNoteList();
     await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath);
   } catch (e) {
     console.error('Directory navigation error:', e);
-    const cached = await loadCachedNotes(dirPath || '');
-    if (cached && cached.notes && cached.notes.length) {
-      for (const n of cached.notes) {
-        if (n.content) contentCache.set(n.path, n.content);
-      }
-      state = {
-        ...state,
-        notes: cached.notes,
-        dirs: cached.dirs || [],
-        currentBrowsePath: cached.currentBrowsePath || '',
-        currentFile: null,
-        isDirty: false,
-      };
-      closeEditor();
-      const total = state.notes.length;
-      const dirCount = state.dirs.length;
-      setConnectionStatus(`Offline · ${total} notes${dirCount ? ` · ${dirCount} folders` : ''}`, false);
-      renderNoteList();
-    } else {
+    state = { ...state, currentFile: null, isDirty: false };
+    closeEditor();
+    if (!(await loadFromCache(dirPath || ''))) {
       setConnectionStatus(`Error: ${e.message}`, false);
       toast(e.message, 'error');
     }
@@ -997,6 +937,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!item) return;
     if (item.dataset.type === 'dir') {
       navigateToDir(item.dataset.path);
+    } else if (item.classList.contains('search-injected')) {
+      openNoteByPath(item.dataset.path);
     } else {
       selectNote(item.dataset.path);
     }
@@ -1064,7 +1006,7 @@ function updatePreview() {
   const preview = document.getElementById('previewPane');
   const text = getContent();
   preview.innerHTML = renderMarkdown(text);
-  clearPreviewHighlights();
+  CSS.highlights.clear();
 }
 
 function sanitizeHtml(html) {
@@ -1141,16 +1083,6 @@ function getSearchCountEls() {
   return searchCountEls;
 }
 
-function hasHighlights() {
-  return !!(globalThis.CSS && CSS.highlights);
-}
-
-function clearPreviewHighlights() {
-  try {
-    CSS.highlights.clear();
-  } catch {}
-}
-
 function debouncedSearch(query, forcePreview) {
   clearTimeout(searchDebounce);
   searchDebounce = setTimeout(() => doSearch(query, forcePreview), 300);
@@ -1225,7 +1157,7 @@ function searchInEditor(query) {
 function searchInPreview(query) {
   const pane = document.getElementById('previewPane');
   if (!query) {
-    clearPreviewHighlights();
+    CSS.highlights.clear();
     searchMatches = [];
     getSearchCountEls().forEach(el => (el.textContent = ''));
     return;
@@ -1236,49 +1168,24 @@ function searchInPreview(query) {
   const ranges = [];
   const walker = document.createTreeWalker(pane, NodeFilter.SHOW_TEXT, null, false);
 
-  if (hasHighlights()) {
-    clearPreviewHighlights();
-    let node;
-    while ((node = walker.nextNode())) {
-      const text = node.textContent;
-      const lower = text.toLowerCase();
-      let idx = 0;
-      while ((idx = lower.indexOf(q, idx)) !== -1) {
-        const range = document.createRange();
-        range.setStart(node, idx);
-        range.setEnd(node, idx + len);
-        ranges.push(range);
-        idx += 1;
-      }
+  CSS.highlights.clear();
+  let node;
+  while ((node = walker.nextNode())) {
+    const text = node.textContent;
+    const lower = text.toLowerCase();
+    let idx = 0;
+    while ((idx = lower.indexOf(q, idx)) !== -1) {
+      const range = document.createRange();
+      range.setStart(node, idx);
+      range.setEnd(node, idx + len);
+      ranges.push(range);
+      idx += 1;
     }
-    if (ranges.length) {
-      const highlight = new Highlight();
-      for (const range of ranges) highlight.add(range);
-      CSS.highlights.set('search-highlight', highlight);
-    }
-  } else {
-    // <mark> fallback for browsers without CSS Highlight API
-    let node;
-    while ((node = walker.nextNode())) {
-      const text = node.textContent;
-      const lower = text.toLowerCase();
-      const textNodeRanges = [];
-      let idx = 0;
-      while ((idx = lower.indexOf(q, idx)) !== -1) {
-        const range = document.createRange();
-        range.setStart(node, idx);
-        range.setEnd(node, idx + len);
-        textNodeRanges.push(range);
-        idx += 1;
-      }
-      // Apply marks last-to-first to preserve index validity
-      for (let i = textNodeRanges.length - 1; i >= 0; i--) {
-        const mark = document.createElement('mark');
-        mark.className = 'search-match';
-        textNodeRanges[i].surroundContents(mark);
-      }
-      ranges.push(...textNodeRanges);
-    }
+  }
+  if (ranges.length) {
+    const highlight = new Highlight();
+    for (const range of ranges) highlight.add(range);
+    CSS.highlights.set('search-highlight', highlight);
   }
 
   searchMatches = ranges;
@@ -1294,23 +1201,14 @@ function selectSearchMatch(index) {
   if (!searchMatches.length) return;
   searchIndex = (index + searchMatches.length) % searchMatches.length;
   if (searchInPreviewMode) {
-    if (hasHighlights()) {
-      CSS.highlights.set('search-current', new Highlight());
-      const range = searchMatches[searchIndex];
-      if (range) {
-        CSS.highlights.set('search-current', new Highlight(range));
-        const pane = document.getElementById('previewPane');
-        const rect = range.getBoundingClientRect();
-        const paneRect = pane.getBoundingClientRect();
-        pane.scrollTop += rect.top - paneRect.top - paneRect.height / 2;
-      }
-    } else {
-      document.querySelectorAll('.search-match-current').forEach(el => el.classList.remove('search-match-current'));
-      const marks = document.querySelectorAll('.search-match');
-      if (marks[searchIndex]) {
-        marks[searchIndex].classList.add('search-match-current');
-        marks[searchIndex].scrollIntoView({ block: 'center' });
-      }
+    CSS.highlights.set('search-current', new Highlight());
+    const range = searchMatches[searchIndex];
+    if (range) {
+      CSS.highlights.set('search-current', new Highlight(range));
+      const pane = document.getElementById('previewPane');
+      const rect = range.getBoundingClientRect();
+      const paneRect = pane.getBoundingClientRect();
+      pane.scrollTop += rect.top - paneRect.top - paneRect.height / 2;
     }
   } else {
     if (searchCurrentMark) {
@@ -1338,7 +1236,7 @@ function searchPrev() {
 function clearSearch() {
   clearTimeout(searchDebounce);
   searchDebounce = null;
-  clearPreviewHighlights();
+  CSS.highlights.clear();
   if (cm) {
     cm.setCursor(cm.getCursor());
     cm.getAllMarks().forEach(m => m.clear());
@@ -1586,7 +1484,6 @@ function sidebarSearch(query) {
       div.setAttribute('data-type', 'file');
       div.style.cursor = 'pointer';
       div.innerHTML = `<span class="name">📄 ${escHtml(n.name)}</span><span style="font-size:11px;color:var(--text-muted)">${escHtml(dir)}</span>`;
-      div.onclick = () => openNoteByPath(n.path);
       frag.appendChild(div);
     });
     list.appendChild(frag);
@@ -1729,9 +1626,6 @@ function bindEvents() {
   byId('settingsSaveBtn')?.addEventListener('click', saveSettings);
 }
 
-function byId(id) {
-  return document.getElementById(id);
-}
 bindEvents();
 
 // Task list checkbox delegation (replaces inline onclick in renderMarkdown)
