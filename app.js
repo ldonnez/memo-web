@@ -1066,23 +1066,8 @@ function updatePreview() {
 }
 
 function sanitizeHtml(html) {
-  const temp = document.createElement('div');
-  temp.innerHTML = html;
-  const dangerous = temp.querySelectorAll('script,style,iframe,frame,object,embed,applet,base,meta,link,noscript');
-  dangerous.forEach(el => el.remove());
-  temp.querySelectorAll('form').forEach(el => el.removeAttribute('action'));
-  temp.querySelectorAll('*').forEach(el => {
-    for (const attr of [...el.attributes]) {
-      if (/^on/i.test(attr.name)) el.removeAttribute(attr.name);
-      if (
-        /^(href|src|action|formaction|xlink:href)$/i.test(attr.name) &&
-        /^\s*(javascript|data|vbscript):/i.test(attr.value.trim())
-      ) {
-        el.removeAttribute(attr.name);
-      }
-    }
-  });
-  return temp.innerHTML;
+  if (typeof DOMPurify === 'undefined') throw new Error('DOMPurify not loaded');
+  return DOMPurify.sanitize(html);
 }
 
 function renderMarkdown(text) {

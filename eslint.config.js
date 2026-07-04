@@ -15,6 +15,7 @@ export default [
         // CDN-injected
         CodeMirror: 'readonly',
         marked: 'readonly',
+        DOMPurify: 'readonly',
         hljs: 'readonly',
         openpgp: 'readonly',
         prettier: 'readonly',

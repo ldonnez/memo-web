@@ -1,5 +1,5 @@
 /* global caches, clients, self, Response */
-const CACHE = 'memo-v2';
+const CACHE = 'memo-v3';
 
 const PRECACHE = [
   './',
@@ -29,6 +29,7 @@ const PRECACHE = [
   'https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/lua/lua.js',
   'https://cdn.jsdelivr.net/npm/codemirror@5.65.18/addon/edit/matchbrackets.js',
   'https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js',
+  'https://cdn.jsdelivr.net/npm/dompurify@3.4.11/dist/purify.min.js',
 ];
 
 self.addEventListener('message', event => {
