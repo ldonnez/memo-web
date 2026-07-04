@@ -12,13 +12,18 @@
       http-equiv="Content-Security-Policy"
       content="
   default-src 'self';
-  script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline';
+  script-src 'self' https://cdn.jsdelivr.net;
   style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline';
   img-src 'self' data: https:;
   connect-src 'self' https://api.github.com;
   font-src 'self' data:;
   form-action 'none';
   frame-ancestors 'none';
+  object-src 'none';
+  base-uri 'none';
+  frame-src 'none';
+  worker-src 'self';
+  upgrade-insecure-requests;
 "
     />
     <meta name="referrer" content="no-referrer" />
@@ -32,46 +37,105 @@
     <link rel="modulepreload" href="lib/crypto.js" />
     <link rel="modulepreload" href="lib/format.js" />
     <link rel="modulepreload" href="lib/update.js" />
-    <script src="https://cdn.jsdelivr.net/npm/openpgp@6.3.1/dist/openpgp.min.js" crossorigin="anonymous"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/openpgp@6.3.1/dist/openpgp.min.js"
+      integrity="sha384-sPmo7pGITv1/X4Bq5p4najbJZGUD3noWlHwrihDBwJ87a7DTu7sSr6uj+B5t/KA+"
+      crossorigin="anonymous"
+    ></script>
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.0/build/styles/github-dark.min.css"
+      integrity="sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH"
+      crossorigin="anonymous"
     />
     <script
       src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.0/build/highlight.min.js"
+      integrity="sha384-iZTDsA4hrrdw3oWgWAtLAOgX01LVJRhWwzsaxnz4pDvF3cvDO8M6amjYktKA8uJU"
       crossorigin="anonymous"
     ></script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/lib/codemirror.css" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/theme/material-darker.css" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/theme/material.css" />
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/lib/codemirror.js" crossorigin="anonymous"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/lib/codemirror.css"
+      integrity="sha384-bsaAhvdduZPAwUb7RRLRvDgtEtOsggrgjkr/EjPO1i/vdoi+DmdLaG79UOt6M5hD"
+      crossorigin="anonymous"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/theme/material-darker.css"
+      integrity="sha384-8Q4oVdkXS0g8qSdedXknw9E+LAgELnjtGG0XlqLny8xVH61TblZLEd1gc0ka8xQs"
+      crossorigin="anonymous"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/theme/material.css"
+      integrity="sha384-ftVWQjQhEzkqErV5eVzStm3sI6m7GdcKRcg8QwhBjMY5u62CduosO64VWHzgAVCt"
+      crossorigin="anonymous"
+    />
+    <script
+      src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/lib/codemirror.js"
+      integrity="sha384-MXj9uwqM5IjRpa3ixv/M8o0m/8gSvaL+hHZpZHORSxspire26syVC5uex4NWUwTL"
+      crossorigin="anonymous"
+    ></script>
     <script
       src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/markdown/markdown.js"
+      integrity="sha384-+DgrmBJvzFFizEu8fQ9BvzcKDPhSyCyRuotcIQIwwtlN+3G+PEqcojPeRE9KhS7u"
       crossorigin="anonymous"
     ></script>
     <script
       src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/javascript/javascript.js"
+      integrity="sha384-UEBcG5Bts/NmkO8UcF+Jq5qLb7Z1SVsz66bvds73oF8/I6p33YGu3l9bgAs27nNj"
       crossorigin="anonymous"
     ></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/xml/xml.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/css/css.js" crossorigin="anonymous"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/xml/xml.js"
+      integrity="sha384-KX/+LdYWr3JcKfT7HK55DC3oPVJwnJSympb1qoO14sxVDtDIg+xHPVLltqJEbitI"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/css/css.js"
+      integrity="sha384-ZD4C1ohrucZOfP7+jQSuBELICO7Z73CFD5stbjic1D3DbZk88mqj3KsRjSml/NCK"
+      crossorigin="anonymous"
+    ></script>
     <script
       src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/htmlmixed/htmlmixed.js"
+      integrity="sha384-0MH/N0DfWPIbCXDe9I7tmLw0dsJ4gKQUijwCcpaTgGxrTTrypsJwEOOqi5yhkQiK"
       crossorigin="anonymous"
     ></script>
     <script
       src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/python/python.js"
+      integrity="sha384-HcVkwdWB4VAA451RvHXtgHgKx0HvmXKY5p1sOBHIK1IpkZJ4CnOzGULahXqEzcGX"
       crossorigin="anonymous"
     ></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/shell/shell.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/yaml/yaml.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/sql/sql.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/lua/lua.js" crossorigin="anonymous"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/shell/shell.js"
+      integrity="sha384-lz9LWKgFew98z3DxB7ohxotQbz0ovVP2toOOccn0RrfT9GCqsXunVj3J96oC6PsP"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/yaml/yaml.js"
+      integrity="sha384-ZZhdQp52D1/LkV/YO7XOrnIUDLQ5IpwfUTgAglnMOfLVYk03RyGG+2Av6tTz8qhq"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/sql/sql.js"
+      integrity="sha384-5mZ0wgGadq62iwrtIuhzdfqkzx6vVnwaidvmUNsSPKHVXF6D1jrCBPBqo0ASTMO7"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/lua/lua.js"
+      integrity="sha384-3O3AmRcrJKLq//rPnaz3yDFzcF8wHWvl61o2H0affu829QRxiMi1qiRdkzxwiIDX"
+      crossorigin="anonymous"
+    ></script>
     <script
       src="https://cdn.jsdelivr.net/npm/codemirror@5.65.18/addon/edit/matchbrackets.js"
+      integrity="sha384-BR0XTjTC3KMLHwZITuYVfySwKtsCtaKjnWj5Rk0rSQRWxnq1kO82+K8EKFmw/sW5"
       crossorigin="anonymous"
     ></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js" crossorigin="anonymous"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js"
+      integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+"
+      crossorigin="anonymous"
+    ></script>
     <style>
       :root {
         --bg: #0d1117;
@@ -979,7 +1043,7 @@
   </head>
   <body>
     <header>
-      <button class="menu-btn" onclick="toggleSidebar()" id="menuBtn" aria-label="Toggle sidebar">
+      <button class="menu-btn" id="menuBtn" aria-label="Toggle sidebar">
         <svg
           viewBox="0 0 24 24"
           width="16"
@@ -1001,13 +1065,13 @@
           style="font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 4px"
           ><span>⚪</span><span class="label">Not connected</span></span
         >
-        <button class="btn btn-sm" onclick="pullChanges()" id="pullBtn" title="Sync with remote">🔄</button>
-        <button class="btn btn-sm" onclick="openSettings()">⚙️</button>
-        <button class="btn btn-sm" onclick="toggleTheme()" id="themeBtn">🌙</button>
+        <button class="btn btn-sm" id="pullBtn" title="Sync with remote">🔄</button>
+        <button class="btn btn-sm" id="settingsBtn">⚙️</button>
+        <button class="btn btn-sm" id="themeBtn">🌙</button>
       </div>
     </header>
 
-    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
     <div class="container">
       <!-- Sidebar -->
@@ -1016,7 +1080,7 @@
           <div style="display: flex; align-items: center; justify-content: space-between">
             <h2 id="sidebarTitle">Notes</h2>
             <div style="display: flex; gap: 4px">
-              <button class="btn btn-sm btn-primary" onclick="newNote()" id="newNoteBtn" disabled>+ New</button>
+              <button class="btn btn-sm btn-primary" id="newNoteBtn" disabled>+ New</button>
             </div>
           </div>
           <div
@@ -1035,13 +1099,6 @@
           inputmode="search"
           id="sidebarSearch"
           placeholder="Filter notes…"
-          oninput="sidebarSearch(this.value)"
-          onkeydown="
-            if (event.key === 'Escape') {
-              this.value = '';
-              sidebarSearch('');
-            }
-          "
           style="
             margin: 4px 16px 8px;
             padding: 6px 10px;
@@ -1078,62 +1135,35 @@
               <span class="filename" id="editorFilename">untitled.md.gpg</span
               ><span id="editorDirty" style="visibility: hidden">*</span>
               <span id="editorStatus" style="font-size: 12px; color: var(--text-muted)"></span>
-              <button class="btn btn-sm" onclick="togglePreview()" id="previewToggle">
-                👁️ <span class="label">Preview</span>
-              </button>
+              <button class="btn btn-sm" id="previewToggle">👁️ <span class="label">Preview</span></button>
             </div>
             <div class="actions">
-              <button class="btn btn-sm" onclick="discardChanges()" id="discardBtn" style="visibility: hidden">
+              <button class="btn btn-sm" id="discardBtn" style="visibility: hidden">
                 ↩️ <span class="label">Discard</span>
               </button>
-              <button class="btn btn-sm btn-primary" onclick="saveNote()" id="saveBtn">
-                💾 <span class="label">Save</span>
-              </button>
-              <button class="btn btn-sm btn-danger" onclick="deleteNote()" id="deleteBtn">🗑️</button>
+              <button class="btn btn-sm btn-primary" id="saveBtn">💾 <span class="label">Save</span></button>
+              <button class="btn btn-sm btn-danger" id="deleteBtn">🗑️</button>
             </div>
           </div>
           <div class="editor-toolbar" id="editorToolbar">
-            <button class="btn btn-sm" onclick="insertMarkdown('**', '**')"><b>B</b></button>
-            <button class="btn btn-sm" onclick="insertMarkdown('*', '*')"><i>I</i></button>
-            <button class="btn btn-sm" onclick="insertMarkdown('### ', '')">H</button>
-            <button class="btn btn-sm" onclick="insertMarkdown('- ', '')">•</button>
-            <button class="btn btn-sm" onclick="toggleTaskOnLine()">☑</button>
-            <button
-              class="btn btn-sm"
-              onclick="insertMarkdown('[', '](url)')"
-              style="padding: 3px 6px; font-size: 11px"
-            >
-              🔗
-            </button>
-            <button
-              class="btn btn-sm"
-              onclick="insertMarkdown('```\n', '\n```')"
-              style="padding: 3px 6px; font-size: 11px"
-            >
-              &lt;/&gt;
-            </button>
-            <button class="btn btn-sm" onclick="insertMarkdown('> ', '')">“</button>
-            <button class="btn btn-sm" onclick="insertTimestamp()" title="Insert date">📅</button>
-            <button class="btn btn-sm" onclick="formatDoc()" title="Format document (Prettier)">✨</button>
-            <button class="btn btn-sm" onclick="toggleSearch()" title="Search in note">🔍</button>
+            <button class="btn btn-sm" id="boldBtn"><b>B</b></button>
+            <button class="btn btn-sm" id="italicBtn"><i>I</i></button>
+            <button class="btn btn-sm" id="headingBtn">H</button>
+            <button class="btn btn-sm" id="bulletBtn">•</button>
+            <button class="btn btn-sm" id="taskBtn">☑</button>
+            <button class="btn btn-sm" id="linkBtn" style="padding: 3px 6px; font-size: 11px">🔗</button>
+            <button class="btn btn-sm" id="codeBtn" style="padding: 3px 6px; font-size: 11px">&lt;/&gt;</button>
+            <button class="btn btn-sm" id="quoteBtn">“</button>
+            <button class="btn btn-sm" id="dateBtn" title="Insert date">📅</button>
+            <button class="btn btn-sm" id="formatBtn" title="Format document (Prettier)">✨</button>
+            <button class="btn btn-sm" id="toolbarSearchBtn" title="Search in note">🔍</button>
           </div>
           <div class="editor-search" id="editorSearch" style="display: none">
-            <input
-              type="text"
-              inputmode="search"
-              id="searchInput"
-              placeholder="Search in note…"
-              oninput="debouncedSearch(this.value)"
-              onkeydown="
-                if (event.key === 'Enter') {
-                  event.shiftKey ? searchPrev() : searchNext();
-                }
-              "
-            />
+            <input type="text" inputmode="search" id="searchInput" placeholder="Search in note…" />
             <span id="searchCount" class="search-count"></span>
-            <button class="btn btn-sm" onclick="searchPrev()" title="Previous">▲</button>
-            <button class="btn btn-sm" onclick="searchNext()" title="Next">▼</button>
-            <button class="btn btn-sm" onclick="toggleSearch()" title="Close">✕</button>
+            <button class="btn btn-sm" id="editorSearchPrev" title="Previous">▲</button>
+            <button class="btn btn-sm" id="editorSearchNext" title="Next">▼</button>
+            <button class="btn btn-sm" id="editorSearchClose" title="Close">✕</button>
           </div>
           <div class="editor-body">
             <textarea id="editorContent" placeholder="Start writing..."></textarea>
@@ -1160,15 +1190,10 @@
               >
                 <span style="font-size: 12px; color: var(--text-muted); font-weight: 600">Preview</span>
                 <div style="display: flex; align-items: center; gap: 6px">
-                  <button
-                    class="btn btn-sm"
-                    onclick="togglePreviewSearch()"
-                    title="Search in preview"
-                    style="padding: 2px 8px"
-                  >
+                  <button class="btn btn-sm" id="previewSearchBtn" title="Search in preview" style="padding: 2px 8px">
                     🔍
                   </button>
-                  <button class="btn btn-sm" onclick="togglePreview()" style="padding: 2px 10px">✕ Close</button>
+                  <button class="btn btn-sm" id="previewCloseBtn" style="padding: 2px 10px">✕ Close</button>
                 </div>
               </div>
               <div
@@ -1200,12 +1225,6 @@
                     font-size: 16px;
                     outline: none;
                   "
-                  oninput="debouncedSearch(this.value, true)"
-                  onkeydown="
-                    if (event.key === 'Enter') {
-                      event.shiftKey ? searchPrev() : searchNext();
-                    }
-                  "
                 />
                 <span
                   class="search-count"
@@ -1219,7 +1238,7 @@
                 ></span>
                 <button
                   class="btn btn-sm"
-                  onclick="searchPrev()"
+                  id="previewSearchPrev"
                   title="Previous"
                   style="font-size: 11px; padding: 2px 8px"
                 >
@@ -1227,7 +1246,7 @@
                 </button>
                 <button
                   class="btn btn-sm"
-                  onclick="searchNext()"
+                  id="previewSearchNext"
                   title="Next"
                   style="font-size: 11px; padding: 2px 8px"
                 >
@@ -1235,7 +1254,7 @@
                 </button>
                 <button
                   class="btn btn-sm"
-                  onclick="togglePreviewSearch()"
+                  id="previewSearchClose"
                   title="Close"
                   style="font-size: 11px; padding: 2px 8px"
                 >
@@ -1254,8 +1273,8 @@
       <div class="modal">
         <h2>⚙️ Settings</h2>
         <div class="tabs">
-          <button class="tab active" data-tab="tab-repo" onclick="switchTab('tab-repo')">Repository</button>
-          <button class="tab" data-tab="tab-crypto" onclick="switchTab('tab-crypto')">Encryption</button>
+          <button class="tab active" data-tab="tab-repo">Repository</button>
+          <button class="tab" data-tab="tab-crypto">Encryption</button>
         </div>
 
         <div class="tab-content active" id="tab-repo">
@@ -1292,7 +1311,7 @@
         <div class="tab-content" id="tab-crypto">
           <div class="form-group">
             <label>Encryption Mode</label>
-            <select id="cryptoMode" onchange="onCryptoModeChange()">
+            <select id="cryptoMode">
               <option value="key">GPG Key (asymmetric)</option>
               <option value="password">Passphrase (symmetric)</option>
             </select>
@@ -1323,8 +1342,8 @@
         </div>
 
         <div class="form-actions">
-          <button class="btn" onclick="closeSettings()">Cancel</button>
-          <button class="btn btn-primary" onclick="saveSettings()">Save & Connect</button>
+          <button class="btn" id="settingsCancelBtn">Cancel</button>
+          <button class="btn btn-primary" id="settingsSaveBtn">Save & Connect</button>
         </div>
       </div>
     </div>
@@ -1333,21 +1352,5 @@
     <div class="toast-container" id="toastContainer"></div>
 
     <script type="module" src="app.js"></script>
-    <script type="module">
-      import { onUpdateAvailable, applyUpdate as applyUpdateFn } from './lib/update.js';
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker
-          .register('sw.js')
-          .then(reg => {
-            onUpdateAvailable(reg, () => {
-              applyUpdateFn(reg);
-            });
-          })
-          .catch(() => {});
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
-          window.location.reload();
-        });
-      }
-    </script>
   </body>
 </html>

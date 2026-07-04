@@ -565,7 +565,7 @@ function renderBreadcrumb() {
     if (i === parts.length - 1) {
       html += `<span style="color:var(--text);font-weight:500;">${label}</span>`;
     } else {
-      html += `<a href="#" onclick="event.preventDefault();navigateToDir('${escAttr(accumulated)}')" style="color:var(--accent)">${label}</a><span style="color:var(--text-muted);margin:0 4px;">/</span>`;
+      html += `<a href="#" data-dir="${escAttr(accumulated)}" style="color:var(--accent)">${label}</a><span style="color:var(--text-muted);margin:0 4px;">/</span>`;
     }
   }
   el.innerHTML = html;
@@ -1065,10 +1065,30 @@ function updatePreview() {
   clearPreviewHighlights();
 }
 
+function sanitizeHtml(html) {
+  const temp = document.createElement('div');
+  temp.innerHTML = html;
+  const dangerous = temp.querySelectorAll('script,style,iframe,frame,object,embed,applet,base,meta,link,noscript');
+  dangerous.forEach(el => el.remove());
+  temp.querySelectorAll('form').forEach(el => el.removeAttribute('action'));
+  temp.querySelectorAll('*').forEach(el => {
+    for (const attr of [...el.attributes]) {
+      if (/^on/i.test(attr.name)) el.removeAttribute(attr.name);
+      if (
+        /^(href|src|action|formaction|xlink:href)$/i.test(attr.name) &&
+        /^\s*(javascript|data|vbscript):/i.test(attr.value.trim())
+      ) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  });
+  return temp.innerHTML;
+}
+
 function renderMarkdown(text) {
   if (!window.marked) return escHtml(text);
   taskIdx = 0;
-  return marked.parse(text, { breaks: true, gfm: true });
+  return sanitizeHtml(marked.parse(text, { breaks: true, gfm: true }));
 }
 
 if (window.marked) {
@@ -1081,7 +1101,7 @@ if (window.marked) {
       listitem({ text, task, checked }) {
         if (task) {
           const idx = taskIdx++;
-          return `<li style="list-style:none;"><input type="checkbox" ${checked ? 'checked' : ''} data-task="${idx}" onclick="toggleTaskByIndex(${idx})"> ${text}</li>`;
+          return `<li style="list-style:none;"><input type="checkbox" ${checked ? 'checked' : ''} data-task-idx="${idx}"> ${text}</li>`;
         }
         return `<li>${text}</li>`;
       },
@@ -1632,44 +1652,120 @@ async function init() {
 }
 init();
 
+// Service worker registration
+if ('serviceWorker' in navigator) {
+  import('./lib/update.js').then(({ onUpdateAvailable, applyUpdate: applyUpdateFn }) => {
+    navigator.serviceWorker
+      .register('sw.js')
+      .then(reg => {
+        onUpdateAvailable(reg, () => {
+          applyUpdateFn(reg);
+        });
+      })
+      .catch(() => {});
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      window.location.reload();
+    });
+  });
+}
+
+// Bind events (replaces inline onclick/oninput/onkeydown/onchange handlers)
+function bindEvents() {
+  // Header
+  byId('menuBtn')?.addEventListener('click', toggleSidebar);
+  byId('pullBtn')?.addEventListener('click', pullChanges);
+  byId('settingsBtn')?.addEventListener('click', openSettings);
+  byId('themeBtn')?.addEventListener('click', toggleTheme);
+
+  // Sidebar
+  byId('sidebarOverlay')?.addEventListener('click', toggleSidebar);
+  byId('newNoteBtn')?.addEventListener('click', newNote);
+  byId('sidebarSearch')?.addEventListener('input', e => sidebarSearch(e.target.value));
+  byId('sidebarSearch')?.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      e.target.value = '';
+      sidebarSearch('');
+    }
+  });
+
+  // Editor toolbar
+  byId('boldBtn')?.addEventListener('click', () => insertMarkdown('**', '**'));
+  byId('italicBtn')?.addEventListener('click', () => insertMarkdown('*', '*'));
+  byId('headingBtn')?.addEventListener('click', () => insertMarkdown('### ', ''));
+  byId('bulletBtn')?.addEventListener('click', () => insertMarkdown('- ', ''));
+  byId('taskBtn')?.addEventListener('click', toggleTaskOnLine);
+  byId('linkBtn')?.addEventListener('click', () => insertMarkdown('[', '](url)'));
+  byId('codeBtn')?.addEventListener('click', () => insertMarkdown('```\n', '\n```'));
+  byId('quoteBtn')?.addEventListener('click', () => insertMarkdown('> ', ''));
+  byId('dateBtn')?.addEventListener('click', insertTimestamp);
+  byId('formatBtn')?.addEventListener('click', formatDoc);
+  byId('toolbarSearchBtn')?.addEventListener('click', toggleSearch);
+
+  // Editor search
+  byId('searchInput')?.addEventListener('input', e => debouncedSearch(e.target.value));
+  byId('searchInput')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.shiftKey ? searchPrev() : searchNext();
+    }
+  });
+  byId('editorSearchPrev')?.addEventListener('click', searchPrev);
+  byId('editorSearchNext')?.addEventListener('click', searchNext);
+  byId('editorSearchClose')?.addEventListener('click', toggleSearch);
+
+  // Editor header actions
+  byId('previewToggle')?.addEventListener('click', togglePreview);
+  byId('discardBtn')?.addEventListener('click', discardChanges);
+  byId('saveBtn')?.addEventListener('click', saveNote);
+  byId('deleteBtn')?.addEventListener('click', deleteNote);
+
+  // Preview header
+  byId('previewSearchBtn')?.addEventListener('click', togglePreviewSearch);
+  byId('previewCloseBtn')?.addEventListener('click', togglePreview);
+
+  // Preview search
+  byId('previewSearchInput')?.addEventListener('input', e => debouncedSearch(e.target.value, true));
+  byId('previewSearchInput')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.shiftKey ? searchPrev() : searchNext();
+    }
+  });
+  byId('previewSearchPrev')?.addEventListener('click', searchPrev);
+  byId('previewSearchNext')?.addEventListener('click', searchNext);
+  byId('previewSearchClose')?.addEventListener('click', togglePreviewSearch);
+
+  // Settings tabs
+  document.querySelectorAll('.tabs .tab[data-tab]').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+  byId('cryptoMode')?.addEventListener('change', onCryptoModeChange);
+  byId('settingsCancelBtn')?.addEventListener('click', closeSettings);
+  byId('settingsSaveBtn')?.addEventListener('click', saveSettings);
+}
+
+function byId(id) {
+  return document.getElementById(id);
+}
+bindEvents();
+
+// Task list checkbox delegation (replaces inline onclick in renderMarkdown)
+document.getElementById('previewPane')?.addEventListener('click', e => {
+  const cb = e.target.closest('input[data-task-idx]');
+  if (cb) {
+    const idx = parseInt(cb.dataset.taskIdx, 10);
+    if (!isNaN(idx)) toggleTaskByIndex(idx);
+  }
+});
+
+// Breadcrumb directory navigation delegation
+document.getElementById('breadcrumb')?.addEventListener('click', e => {
+  const link = e.target.closest('a[data-dir]');
+  if (link) {
+    e.preventDefault();
+    navigateToDir(link.dataset.dir);
+  }
+});
+
 // Close modal on overlay click
-document.getElementById('settingsModal').addEventListener('click', function (e) {
+document.getElementById('settingsModal')?.addEventListener('click', function (e) {
   if (e.target === this) closeSettings();
 });
-// ============= EXPOSE FOR ONCLICK =============
-window.getContent = getContent;
-window.setContent = setContent;
-window.onCryptoModeChange = onCryptoModeChange;
-window.openSettings = openSettings;
-window.closeSettings = closeSettings;
-window.switchTab = switchTab;
-window.saveSettings = saveSettings;
-window.pullChanges = pullChanges;
-window.renderBreadcrumb = renderBreadcrumb;
-window.renderNoteList = renderNoteList;
-window.toggleTaskByIndex = toggleTaskByIndex;
-window.formatDoc = formatDoc;
-window.handleTab = handleTab;
-window.handleShiftTab = handleShiftTab;
-window.toggleTaskOnLine = toggleTaskOnLine;
-window.openNoteByPath = openNoteByPath;
-window.navigateToDir = navigateToDir;
-window.selectNote = selectNote;
-window.closeEditor = closeEditor;
-window.togglePreview = togglePreview;
-window.insertMarkdown = insertMarkdown;
-window.insertTimestamp = insertTimestamp;
-window.discardChanges = discardChanges;
-window.saveNote = saveNote;
-window.newNote = newNote;
-window.deleteNote = deleteNote;
-window.toast = toast;
-window.toggleTheme = toggleTheme;
-window.toggleSidebar = toggleSidebar;
-window.sidebarSearch = sidebarSearch;
-window.toggleSearch = toggleSearch;
-window.togglePreviewSearch = togglePreviewSearch;
-window.debouncedSearch = debouncedSearch;
-window.doSearch = doSearch;
-window.searchNext = searchNext;
-window.searchPrev = searchPrev;
