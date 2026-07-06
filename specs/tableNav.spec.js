@@ -21,8 +21,12 @@ describe('getCellContentStart', () => {
     assert.equal(getCellContentStart('| a |', 0), 2);
   });
 
-  it('returns -1 when no content after pipe', () => {
-    assert.equal(getCellContentStart('|', 0), -1);
+  it('returns pipeIndex+1 when no content after pipe', () => {
+    assert.equal(getCellContentStart('|', 0), 1);
+  });
+
+  it('returns pipeIndex+1 for empty cell between pipes', () => {
+    assert.equal(getCellContentStart('|   |', 0), 1);
   });
 
   it('skips multiple spaces after pipe', () => {
