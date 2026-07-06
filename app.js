@@ -1,5 +1,6 @@
 import { encryptContent, decryptContent } from './lib/crypto.js';
 import { reflowTable, getPipePositions, getCellContentStart } from './lib/format.js';
+import { smartEnter } from './lib/editor.js';
 import {
   escHtml,
   getUrlParam,
@@ -677,28 +678,6 @@ function formatDoc() {
   );
 }
 
-function smartEnter(c) {
-  const cursor = c.getCursor(),
-    line = c.getLine(cursor.line);
-  // Table row: format table, then continue
-  if (line[0] === '|' && line.split('|').length >= 4 && cursor.ch >= line.indexOf('|')) {
-    formatTable(c, cursor.line + 1);
-    return;
-  }
-  let m = line.match(/^(\s*(?:[-*+]|\d+[.)])\s+(?:\[[ x]\]\s+)?)/);
-  if (!m || cursor.ch < m[1].length) return CodeMirror.Pass;
-  const rest = line.slice(m[1].length);
-  if (!rest.trim()) {
-    c.replaceRange('', { line: cursor.line, ch: 0 }, { line: cursor.line, ch: line.length });
-  } else {
-    let prefix = m[1];
-    m = prefix.match(/^(\s*)(\d+)([.)])/);
-    if (m) prefix = m[1] + (parseInt(m[2], 10) + 1) + m[3] + ' ';
-    c.replaceRange('\n' + prefix, { line: cursor.line, ch: cursor.ch });
-  }
-  onEditorInput();
-}
-
 function handleTab(c) {
   if (moveInTable(c, false)) return;
   c.execCommand('insertSoftTab');
@@ -918,7 +897,12 @@ document.addEventListener('DOMContentLoaded', () => {
       tabSize: 2,
       viewportMargin: Infinity,
       matchBrackets: true,
-      extraKeys: { Tab: handleTab, 'Shift-Tab': handleShiftTab, 'Ctrl-Enter': toggleTaskOnLine, Enter: smartEnter },
+      extraKeys: {
+        Tab: handleTab,
+        'Shift-Tab': handleShiftTab,
+        'Ctrl-Enter': toggleTaskOnLine,
+        Enter: c => smartEnter(c, { formatTable, onEditorInput }),
+      },
     });
     cm.on('change', onEditorInput);
   } else {
