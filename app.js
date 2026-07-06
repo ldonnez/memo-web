@@ -1,6 +1,14 @@
 import { encryptContent, decryptContent } from './lib/crypto.js';
-import { reflowTable, getPipePositions, getCellContentStart } from './lib/format.js';
-import { smartEnter } from './lib/editor.js';
+import {
+  smartEnter,
+  handleTab,
+  handleShiftTab,
+  toggleTaskOnLine,
+  toggleTaskByIndex,
+  formatTable,
+  insertMarkdown,
+  insertTimestamp,
+} from './lib/editor.js';
 import {
   escHtml,
   getUrlParam,
@@ -18,6 +26,18 @@ import {
   loadCachedNotes,
   findMatchRanges,
 } from './lib/util.js';
+import { contentCache, draftCache, restoreDrafts, saveDraft, removeDraft } from './lib/draft.js';
+import {
+  parseEntries,
+  buildStatusText,
+  verifyRepo,
+  ghGetFile,
+  ghListDir,
+  ghPutFile,
+  ghDeleteFile,
+  fetchAllNotesContent,
+  walkAllDirsAndPrefetch,
+} from './lib/github.js';
 
 // ============= STATE =============
 let cm = null;
@@ -25,31 +45,6 @@ let taskIdx = 0;
 
 function byId(id) {
   return document.getElementById(id);
-}
-
-function parseEntries(entries, ext) {
-  return {
-    dirs: entries
-      .filter(i => i.type === 'dir')
-      .map(i => ({ name: i.name, path: i.path }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
-    notes: entries
-      .filter(i => i.type === 'file' && i.name.endsWith(ext))
-      .map(i => ({
-        name: i.name,
-        path: i.path,
-        sha: i.sha,
-        size: i.size,
-        date: i.last_modified || '',
-        dirty: draftCache.has(i.path) || false,
-        originalText: '',
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
-  };
-}
-
-function buildStatusText(total, dirCount) {
-  return `${total} notes${dirCount ? ` · ${dirCount} folders` : ''}`;
 }
 
 async function loadFromCache(path, extraState) {
@@ -94,41 +89,6 @@ let state = {
   showPreview: false,
   connected: false,
 };
-
-const contentCache = new Map();
-const draftCache = new Map();
-
-function persistDrafts() {
-  try {
-    const obj = {};
-    for (const [k, v] of draftCache) obj[k] = v;
-    localStorage.setItem('memoweb_drafts', JSON.stringify(obj));
-  } catch (e) {
-    console.warn('Failed to persist drafts:', e);
-  }
-}
-
-function restoreDrafts() {
-  try {
-    const raw = localStorage.getItem('memoweb_drafts');
-    if (raw) {
-      const obj = JSON.parse(raw);
-      for (const [k, v] of Object.entries(obj)) draftCache.set(k, v);
-    }
-  } catch (e) {
-    console.warn('Failed to restore drafts:', e);
-  }
-}
-
-function saveDraft(path, content) {
-  draftCache.set(path, content);
-  persistDrafts();
-}
-
-function removeDraft(path) {
-  draftCache.delete(path);
-  persistDrafts();
-}
 
 // ============= CONFIG =============
 function loadConfig() {
@@ -216,177 +176,6 @@ async function saveSettings() {
   await connect();
 }
 
-async function verifyRepo() {
-  const c = state.config;
-  try {
-    const res = await fetch(`https://api.github.com/repos/${c.ghOwner}/${c.ghRepo}`, {
-      headers: {
-        Authorization: `Bearer ${c.ghToken}`,
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'MemoWeb',
-      },
-    });
-    if (res.status === 404) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(`Repository ${c.ghOwner}/${c.ghRepo} not found or no access. ${err.message || ''}`);
-    }
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || `GitHub API error: ${res.status}`);
-    }
-    return await res.json();
-  } catch (e) {
-    if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
-      throw new Error('Cannot reach GitHub API. Are you offline or behind a firewall?');
-    }
-    throw e;
-  }
-}
-
-// ============= GITHUB API =============
-async function gh(method, path, body) {
-  const c = state.config;
-  const url = `https://api.github.com${path}`;
-  const headers = {
-    Authorization: `Bearer ${c.ghToken}`,
-    Accept: 'application/vnd.github+json',
-    'User-Agent': 'MemoWeb',
-  };
-  const opts = { method, headers };
-  if (body) {
-    headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(body);
-  }
-  const res = await fetch(url, opts);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    const msg = err.message || `GitHub API error ${res.status}`;
-    console.error('GitHub API error:', res.status, err);
-    throw new Error(msg);
-  }
-  if (res.status === 204) return null;
-  return res.json();
-}
-
-async function ghGetFile(path) {
-  const c = state.config;
-  const ref = c.ghBranch || 'main';
-  const encoded = encodeURIComponent(path);
-  try {
-    return await gh('GET', `/repos/${c.ghOwner}/${c.ghRepo}/contents/${encoded}?ref=${ref}`);
-  } catch (e) {
-    if (e.message.includes('Not Found') || e.message.includes('404')) return null;
-    throw e;
-  }
-}
-
-async function ghListDir(path) {
-  const c = state.config;
-  const ref = c.ghBranch || 'main';
-  const encoded = encodeURIComponent(path);
-  try {
-    return await gh('GET', `/repos/${c.ghOwner}/${c.ghRepo}/contents/${encoded}?ref=${ref}`);
-  } catch (e) {
-    if (e.message.includes('Not Found') || e.message.includes('404')) return [];
-    throw e;
-  }
-}
-
-const CONTENT_CONCURRENCY = 5;
-
-async function fetchAllNotesContent(notes) {
-  const updated = [...notes];
-  const queue = updated.map((n, i) => ({ note: n, index: i })).filter(({ note }) => !note.content);
-
-  for (let start = 0; start < queue.length; start += CONTENT_CONCURRENCY) {
-    const batch = queue.slice(start, start + CONTENT_CONCURRENCY);
-    await Promise.all(
-      batch.map(async ({ note, index }) => {
-        try {
-          const data = await ghGetFile(note.path);
-          if (data) {
-            contentCache.set(note.path, data.content);
-            updated[index] = { ...note, content: data.content, sha: data.sha };
-          }
-        } catch (e) {
-          console.warn('Failed to prefetch content for', note.path, e.message);
-        }
-      }),
-    );
-  }
-  return updated;
-}
-
-async function walkAllDirsAndPrefetch(rootPath, fileExt) {
-  const dirs = [rootPath || ''];
-  const seen = new Set();
-
-  while (dirs.length) {
-    const dir = dirs.shift();
-    if (seen.has(dir)) continue;
-    seen.add(dir);
-
-    try {
-      const entries = await ghListDir(dir);
-      if (!Array.isArray(entries)) continue;
-
-      const files = [];
-      for (const item of entries) {
-        if (item.type === 'dir') {
-          dirs.push(item.path);
-        } else if (item.type === 'file' && item.name.endsWith(fileExt)) {
-          files.push(item);
-        }
-      }
-
-      const notes = files.map(f => ({
-        name: f.name,
-        path: f.path,
-        sha: f.sha,
-        size: f.size,
-        date: f.last_modified || '',
-        dirty: false,
-        content: null,
-        decrypted: null,
-        originalText: '',
-      }));
-
-      const withContent = await fetchAllNotesContent(notes);
-      await cacheNotesToLocalStorage(
-        withContent,
-        entries.filter(e => e.type === 'dir'),
-        dir,
-      );
-    } catch (e) {
-      console.warn('walkAllDirsAndPrefetch error for', dir, e.message);
-    }
-  }
-}
-
-async function ghPutFile(path, content, message, sha) {
-  const c = state.config;
-  const encoded = encodeURIComponent(path);
-  const body = {
-    message,
-    content: typeof content === 'string' ? btoa(content) : arrayToBase64(content),
-    branch: c.ghBranch || 'main',
-  };
-  if (sha) body.sha = sha;
-  return await gh('PUT', `/repos/${c.ghOwner}/${c.ghRepo}/contents/${encoded}`, body);
-}
-
-async function ghDeleteFile(path, sha, message) {
-  const c = state.config;
-  const encoded = encodeURIComponent(path);
-  return await gh('DELETE', `/repos/${c.ghOwner}/${c.ghRepo}/contents/${encoded}`, {
-    message: message || `Delete ${path}`,
-    sha,
-    branch: c.ghBranch || 'main',
-  });
-}
-
-// ============= CRYPTO =============
-
 // ============= CONNECT & LIST =============
 async function connect() {
   const c = state.config;
@@ -405,7 +194,7 @@ async function connect() {
     console.log('Connecting to', `${c.ghOwner}/${c.ghRepo}`, 'path:', path, 'branch:', c.ghBranch);
 
     // Verify repo exists and is accessible
-    const repoData = await verifyRepo();
+    const repoData = await verifyRepo(state.config);
     console.log('Repo found:', repoData.full_name, 'default branch:', repoData.default_branch);
     document.getElementById('sidebarTitle').textContent = repoData.name;
 
@@ -417,7 +206,7 @@ async function connect() {
       }
     }
 
-    const entries = path ? await ghListDir(path) : await ghListDir('');
+    const entries = path ? await ghListDir(state.config, path) : await ghListDir(state.config, '');
 
     if (!Array.isArray(entries)) {
       console.warn('Unexpected response from GitHub API, expected array, got:', entries);
@@ -429,12 +218,15 @@ async function connect() {
 
     const { dirs, notes } = parseEntries(entries, ext);
     state = { ...state, dirs, notes, currentBrowsePath: path };
-    state = { ...state, notes: await fetchAllNotesContent(state.notes) };
+    state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) };
 
     setConnectionStatus(`Connected · ${buildStatusText(state.notes.length, state.dirs.length)}`, true);
     renderNoteList();
     await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath);
-    setTimeout(() => walkAllDirsAndPrefetch(path, ext).catch(e => console.warn('background sync:', e.message)), 0);
+    setTimeout(
+      () => walkAllDirsAndPrefetch(state.config, path, ext).catch(e => console.warn('background sync:', e.message)),
+      0,
+    );
     byId('newNoteBtn').disabled = false;
 
     if (state.currentFile) {
@@ -474,7 +266,7 @@ async function pullChanges() {
   setConnectionStatus('Syncing...', state.connected);
 
   try {
-    const entries = await ghListDir(currentPath || '');
+    const entries = await ghListDir(state.config, currentPath || '');
     if (Array.isArray(entries)) {
       const { dirs, notes } = parseEntries(entries, ext);
       state = { ...state, dirs, notes };
@@ -485,7 +277,7 @@ async function pullChanges() {
     if (openFile) {
       const stillExists = state.notes.find(n => n.path === openFile.path);
       if (stillExists) {
-        const data = await ghGetFile(openFile.path);
+        const data = await ghGetFile(state.config, openFile.path);
         if (data) {
           const binary = Uint8Array.from(atob(data.content), c => c.charCodeAt(0));
           const decrypted = await decryptContent(state.config, binary);
@@ -507,13 +299,16 @@ async function pullChanges() {
       }
     }
 
-    state = { ...state, notes: await fetchAllNotesContent(state.notes) };
+    state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) };
 
     setConnectionStatus(`Synced · ${buildStatusText(state.notes.length, state.dirs.length)}`, true);
     renderNoteList();
     await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath);
     const basePath = c.ghPath || '';
-    setTimeout(() => walkAllDirsAndPrefetch(basePath, ext).catch(e => console.warn('background sync:', e.message)), 0);
+    setTimeout(
+      () => walkAllDirsAndPrefetch(state.config, basePath, ext).catch(e => console.warn('background sync:', e.message)),
+      0,
+    );
     toast('Synced with remote', 'info');
   } catch (e) {
     setConnectionStatus('Sync failed', state.connected);
@@ -590,66 +385,6 @@ function renderNoteList() {
   list.innerHTML = items.join('');
 }
 
-function toggleTaskByIndex(idx) {
-  const content = cm ? cm.getValue() : document.getElementById('editorContent').value;
-  const lines = content.split('\n');
-  let count = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^(\s*[-*+]\s+)\[([ x])\]\s*/);
-    if (m) {
-      if (count === idx) {
-        const newCheck = m[2] === 'x' ? ' ' : 'x';
-        const newLine = lines[i].replace(/(\[)[ x](\])/, '$1' + newCheck + '$2');
-        if (cm) {
-          cm.replaceRange(newLine, { line: i, ch: 0 }, { line: i, ch: lines[i].length });
-        } else {
-          const ta = document.getElementById('editorContent');
-          ta.value = content.replace(lines[i], newLine);
-          ta.dispatchEvent(new Event('input'));
-        }
-        onEditorInput();
-        return;
-      }
-      count++;
-    }
-  }
-}
-
-function formatTable(c, insertLine) {
-  const lines = c.getValue().split('\n'),
-    n = lines.length;
-  let start = insertLine;
-  while (start > 0 && lines[start - 1] && lines[start - 1][0] === '|') start--;
-  let end = insertLine;
-  while (end < n - 1 && lines[end + 1] && lines[end + 1][0] === '|') end++;
-  const rowLines = [],
-    rowParts = [];
-  let cols = 0;
-  for (let i = start; i <= end; i++) {
-    if (!lines[i] || lines[i][0] !== '|') continue;
-    const parts = lines[i].split('|');
-    parts.shift();
-    parts.pop();
-    rowLines.push(i);
-    rowParts.push(parts);
-    if (parts.length > cols) cols = parts.length;
-  }
-  if (cols < 2) {
-    c.replaceRange('\n', { line: insertLine, ch: 0 });
-    c.setCursor({ line: insertLine + 1, ch: 0 });
-    return;
-  }
-  const widths = reflowTable(lines, rowLines, rowParts, cols);
-  // Build empty row with matching widths
-  let newRow = '|';
-  for (let j = 0; j < cols; j++) newRow += ' ' + Array(widths[j] + 2).join(' ') + '|';
-  const anchor = rowLines[rowLines.length - 1];
-  lines.splice(anchor + 1, 0, newRow);
-  c.setValue(lines.join('\n'));
-  c.setCursor({ line: anchor + 1, ch: 1 });
-  onEditorInput();
-}
-
 function formatDoc() {
   if (!cm || !state.currentFile) return;
   if (typeof prettier === 'undefined' || !window.prettierPlugins) {
@@ -676,54 +411,6 @@ function formatDoc() {
       onEditorInput();
     },
   );
-}
-
-function handleTab(c) {
-  if (moveInTable(c, false)) return;
-  c.execCommand('insertSoftTab');
-}
-function handleShiftTab(c) {
-  if (moveInTable(c, true)) return;
-  return CodeMirror.Pass;
-}
-function moveInTable(c, shift) {
-  const cur = c.getCursor(),
-    line = c.getLine(cur.line);
-  if (!line.match(/^\|/) || line.split('|').length < 3) return false;
-  const pipes = getPipePositions(line);
-  let cell = -1;
-  for (let i = 0; i < pipes.length - 1; i++) {
-    if (cur.ch >= pipes[i] && cur.ch < pipes[i + 1]) {
-      cell = i;
-      break;
-    }
-  }
-  if (cell < 0) return false;
-  const target = shift ? cell - 1 : cell + 1;
-  if (target < 0 || target >= pipes.length - 1) return false;
-  const pos = getCellContentStart(line, pipes[target]);
-  if (pos < 0) return false;
-  c.setCursor({ line: cur.line, ch: pos });
-  return true;
-}
-
-function toggleTaskOnLine() {
-  if (!cm || !state.currentFile) return;
-  const cursor = cm.getCursor();
-  const line = cm.getLine(cursor.line);
-  const m = line.match(/^(\s*[-*+]\s+)\[([ x])\]\s*/);
-  if (m) {
-    const newCheck = m[2] === 'x' ? ' ' : 'x';
-    const newLine = line.replace(/(\[)[ x](\])/, '$1' + newCheck + '$2');
-    cm.replaceRange(newLine, { line: cursor.line, ch: 0 }, { line: cursor.line, ch: line.length });
-    cm.focus();
-    onEditorInput();
-  } else {
-    cm.replaceRange('- [ ] ', { line: cursor.line, ch: 0 });
-    cm.setCursor({ line: cursor.line, ch: 6 });
-    cm.focus();
-    onEditorInput();
-  }
 }
 
 async function openNoteByPath(path) {
@@ -755,7 +442,7 @@ async function navigateToDir(dirPath) {
   const c = state.config;
 
   try {
-    const entries = await ghListDir(dirPath || '');
+    const entries = await ghListDir(state.config, dirPath || '');
     if (!Array.isArray(entries)) {
       setConnectionStatus('Connected', true);
       return;
@@ -766,7 +453,7 @@ async function navigateToDir(dirPath) {
     state = { ...state, dirs, notes, currentBrowsePath: dirPath, currentFile: null, isDirty: false };
     closeEditor();
 
-    state = { ...state, notes: await fetchAllNotesContent(state.notes) };
+    state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) };
 
     setConnectionStatus(`Connected · ${buildStatusText(state.notes.length, state.dirs.length)}`, true);
     renderNoteList();
@@ -829,7 +516,7 @@ async function selectNote(path) {
   try {
     // Fetch from GitHub if not cached
     if (!note.content) {
-      const data = await ghGetFile(note.path);
+      const data = await ghGetFile(state.config, note.path);
       if (!data) throw new Error('File not found');
       const updatedNote = { ...note, content: data.content, sha: data.sha };
       state = {
@@ -900,7 +587,7 @@ document.addEventListener('DOMContentLoaded', () => {
       extraKeys: {
         Tab: handleTab,
         'Shift-Tab': handleShiftTab,
-        'Ctrl-Enter': toggleTaskOnLine,
+        'Ctrl-Enter': c => toggleTaskOnLine(c, state.currentFile, onEditorInput),
         Enter: c => smartEnter(c, { formatTable, onEditorInput }),
       },
     });
@@ -1020,37 +707,6 @@ if (window.marked) {
       },
     },
   });
-}
-
-function insertMarkdown(before, after) {
-  if (cm) {
-    const selected = cm.getSelection();
-    const from = cm.getCursor('from');
-    cm.replaceSelection(before + selected + after);
-    if (!selected) {
-      cm.setCursor({ line: from.line, ch: from.ch + before.length });
-    }
-    cm.focus();
-    onEditorInput();
-    return;
-  }
-  const ta = document.getElementById('editorContent');
-  const start = ta.selectionStart;
-  const end = ta.selectionEnd;
-  const text = ta.value;
-  const selected = text.substring(start, end);
-  ta.value = text.substring(0, start) + before + selected + after + text.substring(end);
-  ta.selectionStart = start + before.length;
-  ta.selectionEnd = start + before.length + selected.length;
-  ta.focus();
-  onEditorInput();
-}
-
-function insertTimestamp() {
-  const now = new Date();
-  const pad = n => String(n).padStart(2, '0');
-  const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  insertMarkdown(ts, '');
 }
 
 // ============= SEARCH =============
@@ -1275,7 +931,7 @@ async function saveNote() {
     const note = state.currentFile;
     const b64 = typeof encrypted === 'string' ? btoa(encrypted) : arrayToBase64(encrypted);
 
-    const result = await ghPutFile(note.path, encrypted, commitMsg(), note.sha);
+    const result = await ghPutFile(state.config, note.path, encrypted, commitMsg(), note.sha);
     const clean = markNoteClean(note, state.notes, text);
     removeDraft(note.path);
     contentCache.set(note.path, b64);
@@ -1317,7 +973,7 @@ async function newNote() {
   const path = dir ? `${dir}/${name.trim()}${ext}` : `${name.trim()}${ext}`;
 
   // Check if exists
-  const existing = await ghGetFile(path);
+  const existing = await ghGetFile(state.config, path);
   if (existing) {
     toast('A note with this name already exists', 'error');
     return;
@@ -1363,7 +1019,7 @@ async function deleteNote() {
   if (!confirm(`Delete "${state.currentFile.name}"? This cannot be undone.`)) return;
 
   try {
-    await ghDeleteFile(state.currentFile.path, state.currentFile.sha, commitMsg());
+    await ghDeleteFile(state.config, state.currentFile.path, state.currentFile.sha, commitMsg());
     state = { ...state, notes: state.notes.filter(n => n.path !== state.currentFile.path) };
     closeEditor();
     toast('Note deleted', 'info');
@@ -1568,15 +1224,15 @@ function bindEvents() {
   });
 
   // Editor toolbar
-  byId('boldBtn')?.addEventListener('click', () => insertMarkdown('**', '**'));
-  byId('italicBtn')?.addEventListener('click', () => insertMarkdown('*', '*'));
-  byId('headingBtn')?.addEventListener('click', () => insertMarkdown('### ', ''));
-  byId('bulletBtn')?.addEventListener('click', () => insertMarkdown('- ', ''));
-  byId('taskBtn')?.addEventListener('click', toggleTaskOnLine);
-  byId('linkBtn')?.addEventListener('click', () => insertMarkdown('[', '](url)'));
-  byId('codeBtn')?.addEventListener('click', () => insertMarkdown('```\n', '\n```'));
-  byId('quoteBtn')?.addEventListener('click', () => insertMarkdown('> ', ''));
-  byId('dateBtn')?.addEventListener('click', insertTimestamp);
+  byId('boldBtn')?.addEventListener('click', () => insertMarkdown('**', '**', cm, onEditorInput));
+  byId('italicBtn')?.addEventListener('click', () => insertMarkdown('*', '*', cm, onEditorInput));
+  byId('headingBtn')?.addEventListener('click', () => insertMarkdown('### ', '', cm, onEditorInput));
+  byId('bulletBtn')?.addEventListener('click', () => insertMarkdown('- ', '', cm, onEditorInput));
+  byId('taskBtn')?.addEventListener('click', () => toggleTaskOnLine(cm, state.currentFile, onEditorInput));
+  byId('linkBtn')?.addEventListener('click', () => insertMarkdown('[', '](url)', cm, onEditorInput));
+  byId('codeBtn')?.addEventListener('click', () => insertMarkdown('```\n', '\n```', cm, onEditorInput));
+  byId('quoteBtn')?.addEventListener('click', () => insertMarkdown('> ', '', cm, onEditorInput));
+  byId('dateBtn')?.addEventListener('click', () => insertTimestamp(cm, onEditorInput));
   byId('formatBtn')?.addEventListener('click', formatDoc);
   byId('toolbarSearchBtn')?.addEventListener('click', toggleSearch);
 
@@ -1648,7 +1304,7 @@ document.getElementById('previewPane')?.addEventListener('click', e => {
   const cb = e.target.closest('input[data-task-idx]');
   if (cb) {
     const idx = parseInt(cb.dataset.taskIdx, 10);
-    if (!isNaN(idx)) toggleTaskByIndex(idx);
+    if (!isNaN(idx)) toggleTaskByIndex(idx, cm, onEditorInput);
   }
 });
 

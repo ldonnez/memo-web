@@ -6,7 +6,7 @@
 - **ESM** — `"type": "module"` in `package.json`, `<script type="module">` in HTML.
 - **Service Worker** — `sw.js` with `CACHE = 'memo-vN'`. Bump version when CDN URLs change (old cache auto-deleted on activate).
 - **All CSS lives in `<style>` in `index.html`** — no CSS files.
-- **All JS logic in `app.js`** (~1646 lines). Imports from `lib/{crypto,format,update,util}.js`.
+- **All JS logic in `app.js`** (~1314 lines). Imports from `lib/{crypto,draft,format,github,update,util}.js`.
 - **CDN libraries** loaded via `<script>` tags with `integrity` + `crossorigin="anonymous"`. CSP `script-src` = `'self' https://cdn.jsdelivr.net`.
 
 ## Commands
@@ -22,7 +22,7 @@ CI order: `npm install → npm run format:check → npm run lint → npm test` (
 
 ## Testing
 
-- Uses Node's built-in test runner (`node --test`). 152 tests across 17 files in `specs/`.
+- Uses Node's built-in test runner (`node --test`). 251 tests across 19 files in `specs/`.
 - Run single file: `node --test specs/crypto.spec.js`.
 - Node 24 required (CI runs Node 24).
 - Tests for `crypto.js` set up `globalThis.openpgp` in `before()` hook — that module needs it even in tests.
@@ -30,15 +30,15 @@ CI order: `npm install → npm run format:check → npm run lint → npm test` (
 ## Architecture
 
 - **`index.html`** — shell with all CSS in `<style>`, CDN scripts in `<head>`, DOMPurify `<script>` + `<script type="module" src="app.js">` at end of `<body>`.
-- **`app.js`** — single-file application logic: state management, CodeMirror 5 editor, GitHub API client, settings, preview rendering, pull-to-refresh. Entry point at bottom: `loadConfig()` then `init()`.
+- **`app.js`** — application shell: state management, CodeMirror 5 editor, settings, preview rendering, pull-to-refresh. Entry point at bottom: `loadConfig()` then `init()`.
 - **`sw.js`** — service worker. Caching: local assets stale-while-revalidate, CDN cache-first, API network-only, index.html network-first.
 - **`lib/crypto.js`** — `encryptContent`/`decryptContent` using OpenPGP.js (symmetric or asymmetric).
 - **`lib/update.js`** — `onUpdateAvailable` + `applyUpdate` for SW lifecycle.
 - **`lib/format.js`** — Markdown table formatting (`reflowTable`, `getPipePositions`, `getCellContentStart`).
 - **`lib/util.js`** — helpers: `escHtml`, `escAttr`, `highlightCode`, `computeDirtyState`, `formatNoteItem`, etc.
+- **`lib/github.js`** — GitHub API client: `gh`, `ghGetFile`, `ghListDir`, `ghPutFile`, `ghDeleteFile`, `verifyRepo`, `parseEntries`, `buildStatusText`, `fetchAllNotesContent`, `walkAllDirsAndPrefetch`. All functions take `config` as first parameter.
+- **`lib/draft.js`** — draft/content cache: `contentCache`, `draftCache`, `persistDrafts`, `restoreDrafts`, `saveDraft`, `removeDraft`. Module-level `Map` singletons backed by localStorage.
 - **`byId()`** — `document.getElementById()` shorthand, defined at top of `app.js`.
-- **`parseEntries(entries, ext)`** — maps GitHub API entries into `{ dirs, notes }` objects (used by `connect`, `pullChanges`, `navigateToDir`).
-- **`buildStatusText(total, dirCount)`** — builds `"N notes · M folders"` status string.
 - **`loadFromCache(path, extraState)`** — loads cached notes from IndexedDB on connection failure; shared by `connect` and `navigateToDir`.
 
 ## Conventions
