@@ -446,7 +446,8 @@
         padding: 2px 8px;
       }
       #sidebarSearch,
-      #searchInput {
+      #searchInput,
+      #previewSearchInput {
         font-size: 16px;
       }
       .search-input-wrap {
@@ -511,6 +512,12 @@
         color: var(--text);
         overflow-y: auto;
       }
+      #previewContainer {
+        flex-direction: column;
+        flex: 1;
+        overflow: hidden;
+        border-left: 1px solid var(--border);
+      }
       .editor-body .CodeMirror {
         flex: 1;
         height: auto;
@@ -532,11 +539,11 @@
         background: rgba(88, 166, 255, 0.3);
       }
       .editor-body .search-match {
-        background: rgba(255, 255, 0, 0.35) !important;
+        background: rgba(255, 255, 0, 0.35);
         border-radius: 2px;
       }
       .editor-body .search-match-current {
-        background: rgba(88, 166, 255, 0.45) !important;
+        background: rgba(88, 166, 255, 0.45);
         border-radius: 2px;
       }
       ::highlight(search-highlight) {
@@ -1002,9 +1009,9 @@
           font-size: 16px;
         }
         #previewContainer {
-          border-left: none !important;
+          border-left: none;
           border-top: 1px solid var(--border);
-          flex: 10 !important;
+          flex: 10;
         }
         #editor:has(#previewContainer[style*='display: flex']) .editor-toolbar,
         #editor:has(#previewContainer[style*='display: flex']) #editorContent,
@@ -1012,7 +1019,7 @@
           display: none;
         }
         #editor:has(#previewContainer[style*='display: flex']) #previewContainer {
-          flex: 1 !important;
+          flex: 1;
           border-top: none;
         }
         .form-row {
@@ -1085,7 +1092,7 @@
           right: 2px;
         }
         #previewSearchInput {
-          font-size: 16px !important;
+          font-size: 16px;
         }
       }
     </style>
@@ -1206,16 +1213,7 @@
           </div>
           <div class="editor-body">
             <textarea id="editorContent" placeholder="Start writing..."></textarea>
-            <div
-              id="previewContainer"
-              style="
-                display: none;
-                flex-direction: column;
-                flex: 1;
-                overflow: hidden;
-                border-left: 1px solid var(--border);
-              "
-            >
+            <div id="previewContainer" style="display: none">
               <div
                 style="
                   display: flex;
@@ -1261,7 +1259,6 @@
                       border-radius: var(--radius);
                       background: var(--bg);
                       color: var(--text);
-                      font-size: 16px;
                       outline: none;
                     "
                   />
