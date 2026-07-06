@@ -437,8 +437,9 @@
         font-size: 12px;
         color: var(--text-muted);
         white-space: nowrap;
-        min-width: 36px;
+        width: 60px;
         text-align: center;
+        flex-shrink: 0;
       }
       .editor-search .btn {
         font-size: 11px;
@@ -447,6 +448,49 @@
       #sidebarSearch,
       #searchInput {
         font-size: 16px;
+      }
+      .search-input-wrap {
+        position: relative;
+        display: flex;
+        align-items: center;
+      }
+      .search-input-wrap > input {
+        width: 100%;
+        padding-right: 24px;
+      }
+      .sidebar-search-wrap {
+        margin: 4px 16px 4px;
+        flex-shrink: 0;
+      }
+      .sidebar-search-wrap > input {
+        padding: 6px 28px 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--bg);
+        color: var(--text);
+        outline: none;
+      }
+      .search-clear {
+        position: absolute;
+        right: 4px;
+        top: 50%;
+        transform: translateY(-50%);
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        padding: 6px 8px;
+        font-size: 18px;
+        line-height: 1;
+        border-radius: 3px;
+        z-index: 1;
+        touch-action: manipulation;
+      }
+      .search-clear:hover {
+        color: var(--text);
+      }
+      .search-clear.is-hidden {
+        display: none;
       }
 
       .editor-body {
@@ -1031,9 +1075,14 @@
           padding: 4px 6px;
           font-size: 13px;
         }
-        #sidebarSearch {
-          margin: 6px 12px 8px;
-          padding: 8px 10px;
+        .sidebar-search-wrap {
+          margin: 6px 12px 4px;
+        }
+        .sidebar-search-wrap > input {
+          padding: 6px 28px 6px 12px;
+        }
+        .search-clear {
+          right: 2px;
         }
         #previewSearchInput {
           font-size: 16px !important;
@@ -1094,23 +1143,10 @@
             "
           ></div>
         </div>
-        <input
-          type="text"
-          inputmode="search"
-          id="sidebarSearch"
-          placeholder="Filter notes…"
-          style="
-            margin: 4px 16px 8px;
-            padding: 6px 10px;
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            background: var(--bg);
-            color: var(--text);
-            font-size: 16px;
-            outline: none;
-            flex-shrink: 0;
-          "
-        />
+        <div class="search-input-wrap sidebar-search-wrap">
+          <input type="text" inputmode="search" id="sidebarSearch" placeholder="Filter notes…" />
+          <button class="search-clear is-hidden" id="sidebarSearchClear">✕</button>
+        </div>
         <div class="note-list" id="noteList">
           <div class="empty-state">
             <div class="icon">📝</div>
@@ -1159,7 +1195,10 @@
             <button class="btn btn-sm" id="toolbarSearchBtn" title="Search in note">🔍</button>
           </div>
           <div class="editor-search" id="editorSearch" style="display: none">
-            <input type="text" inputmode="search" id="searchInput" placeholder="Search in note…" />
+            <div class="search-input-wrap" style="flex: 1">
+              <input type="text" inputmode="search" id="searchInput" placeholder="Search in note…" />
+              <button class="search-clear is-hidden" id="searchInputClear">✕</button>
+            </div>
             <span id="searchCount" class="search-count"></span>
             <button class="btn btn-sm" id="editorSearchPrev" title="Previous">▲</button>
             <button class="btn btn-sm" id="editorSearchNext" title="Next">▼</button>
@@ -1209,31 +1248,34 @@
                   gap: 6px;
                 "
               >
-                <input
-                  type="text"
-                  inputmode="search"
-                  id="previewSearchInput"
-                  placeholder="Search in preview…"
-                  style="
-                    flex: 1;
-                    min-width: 0;
-                    padding: 4px 8px;
-                    border: 1px solid var(--border);
-                    border-radius: var(--radius);
-                    background: var(--bg);
-                    color: var(--text);
-                    font-size: 16px;
-                    outline: none;
-                  "
-                />
+                <div class="search-input-wrap" style="flex: 1">
+                  <input
+                    type="text"
+                    inputmode="search"
+                    id="previewSearchInput"
+                    placeholder="Search in preview…"
+                    style="
+                      min-width: 0;
+                      padding: 4px 24px 4px 8px;
+                      border: 1px solid var(--border);
+                      border-radius: var(--radius);
+                      background: var(--bg);
+                      color: var(--text);
+                      font-size: 16px;
+                      outline: none;
+                    "
+                  />
+                  <button class="search-clear is-hidden" id="previewSearchClear">✕</button>
+                </div>
                 <span
                   class="search-count"
                   style="
                     font-size: 12px;
                     color: var(--text-muted);
                     white-space: nowrap;
-                    min-width: 36px;
+                    width: 60px;
                     text-align: center;
+                    flex-shrink: 0;
                   "
                 ></span>
                 <button

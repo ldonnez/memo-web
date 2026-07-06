@@ -1564,12 +1564,23 @@ function bindEvents() {
   // Sidebar
   byId('sidebarOverlay')?.addEventListener('click', toggleSidebar);
   byId('newNoteBtn')?.addEventListener('click', newNote);
-  byId('sidebarSearch')?.addEventListener('input', e => sidebarSearch(e.target.value));
+  byId('sidebarSearch')?.addEventListener('input', e => {
+    byId('sidebarSearchClear').classList.toggle('is-hidden', !e.target.value);
+    sidebarSearch(e.target.value);
+  });
   byId('sidebarSearch')?.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       e.target.value = '';
+      byId('sidebarSearchClear').classList.add('is-hidden');
       sidebarSearch('');
     }
+  });
+  byId('sidebarSearchClear')?.addEventListener('click', () => {
+    const input = byId('sidebarSearch');
+    input.value = '';
+    byId('sidebarSearchClear').classList.add('is-hidden');
+    sidebarSearch('');
+    input.focus();
   });
 
   // Editor toolbar
@@ -1586,11 +1597,21 @@ function bindEvents() {
   byId('toolbarSearchBtn')?.addEventListener('click', toggleSearch);
 
   // Editor search
-  byId('searchInput')?.addEventListener('input', e => debouncedSearch(e.target.value));
+  byId('searchInput')?.addEventListener('input', e => {
+    byId('searchInputClear').classList.toggle('is-hidden', !e.target.value);
+    debouncedSearch(e.target.value);
+  });
   byId('searchInput')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
       e.shiftKey ? searchPrev() : searchNext();
     }
+  });
+  byId('searchInputClear')?.addEventListener('click', () => {
+    const input = byId('searchInput');
+    input.value = '';
+    byId('searchInputClear').classList.add('is-hidden');
+    debouncedSearch('');
+    input.focus();
   });
   byId('editorSearchPrev')?.addEventListener('click', searchPrev);
   byId('editorSearchNext')?.addEventListener('click', searchNext);
@@ -1607,11 +1628,21 @@ function bindEvents() {
   byId('previewCloseBtn')?.addEventListener('click', togglePreview);
 
   // Preview search
-  byId('previewSearchInput')?.addEventListener('input', e => debouncedSearch(e.target.value, true));
+  byId('previewSearchInput')?.addEventListener('input', e => {
+    byId('previewSearchClear').classList.toggle('is-hidden', !e.target.value);
+    debouncedSearch(e.target.value, true);
+  });
   byId('previewSearchInput')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
       e.shiftKey ? searchPrev() : searchNext();
     }
+  });
+  byId('previewSearchClear')?.addEventListener('click', () => {
+    const input = byId('previewSearchInput');
+    input.value = '';
+    byId('previewSearchClear').classList.add('is-hidden');
+    debouncedSearch('');
+    input.focus();
   });
   byId('previewSearchPrev')?.addEventListener('click', searchPrev);
   byId('previewSearchNext')?.addEventListener('click', searchNext);
