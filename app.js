@@ -656,7 +656,7 @@ function onEditorInput() {
     dirtyEl.style.visibility = 'hidden';
   }
   renderNoteList();
-  if (state.showPreview) updatePreview();
+  if (state.showPreview) updatePreview(false);
 }
 
 function togglePreview() {
@@ -673,11 +673,12 @@ function togglePreview() {
   if (cm) setTimeout(() => cm.refresh(), 50);
 }
 
-function updatePreview() {
+function updatePreview(resetScroll = true) {
   const preview = document.getElementById('previewPane');
   const text = getContent();
   preview.innerHTML = renderMarkdown(text);
   CSS.highlights.clear();
+  if (resetScroll) preview.scrollTop = 0;
 }
 
 function sanitizeHtml(html) {
