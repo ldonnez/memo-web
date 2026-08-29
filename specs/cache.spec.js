@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { cacheNotesToLocalStorage, loadCachedNotes } from '../lib/util.js';
+import { cacheNotesToLocalStorage, loadCachedNotes, listCachedNotePaths } from '../lib/util.js';
 
 describe('cacheNotesToLocalStorage / loadCachedNotes', () => {
   it('returns null when IndexedDB is unavailable', async () => {
@@ -31,5 +31,17 @@ describe('cacheNotesToLocalStorage / loadCachedNotes', () => {
     assert.ok(Array.isArray(payload.dirs));
     assert.equal(typeof payload.currentBrowsePath, 'string');
     assert.equal(typeof payload.timestamp, 'number');
+  });
+});
+
+describe('listCachedNotePaths', () => {
+  it('returns an empty array when IndexedDB is unavailable', async () => {
+    const paths = await listCachedNotePaths();
+    assert.ok(Array.isArray(paths));
+    assert.equal(paths.length, 0);
+  });
+
+  it('does not throw when IndexedDB is unavailable', async () => {
+    await assert.doesNotReject(() => listCachedNotePaths());
   });
 });

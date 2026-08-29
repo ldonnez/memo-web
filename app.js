@@ -24,6 +24,8 @@ import {
   revertNote,
   cacheNotesToLocalStorage,
   loadCachedNotes,
+  listCachedNotePaths,
+  pickBestCachedRecord,
   findMatchRanges,
 } from './lib/util.js';
 import { contentCache, draftCache, restoreDrafts, saveDraft, removeDraft } from './lib/draft.js';
@@ -48,14 +50,23 @@ function byId(id) {
 }
 
 async function loadFromCache(path, extraState) {
-  const cached = await loadCachedNotes(path || '');
+  let cached = await loadCachedNotes(path || '');
+  if (!cached || !cached.notes || !cached.notes.length) {
+    const candidates = await listCachedNotePaths();
+    const records = [];
+    for (const key of candidates) {
+      records.push(await loadCachedNotes(key.replace(/^memoweb_cache:/, '')));
+    }
+    cached = pickBestCachedRecord(records);
+  }
   if (!cached || !cached.notes || !cached.notes.length) return false;
-  for (const n of cached.notes) {
+  const notes = cached.notes.map(n => ({ ...n, dirty: draftCache.has(n.path) || n.dirty }));
+  for (const n of notes) {
     if (n.content) contentCache.set(n.path, n.content);
   }
   state = {
     ...state,
-    notes: cached.notes,
+    notes,
     dirs: cached.dirs || [],
     currentBrowsePath: cached.currentBrowsePath || '',
     ...extraState,
@@ -237,7 +248,8 @@ async function connect() {
     }
   } catch (e) {
     console.error('Connection error:', e);
-    if (!(await loadFromCache(state.currentBrowsePath))) {
+    const fallbackPath = c.ghPath || state.currentBrowsePath;
+    if (!(await loadFromCache(fallbackPath))) {
       setConnectionStatus(`Error: ${e.message}`, false);
       toast(e.message, 'error');
     }
@@ -640,6 +652,9 @@ function onEditorInput() {
   const newContent = getContent();
   const result = computeDirtyState(state.notes, state.currentFile, newContent, state.originalContent);
   state = { ...state, currentContent: newContent, ...result };
+  if (result.isDirty && state.currentFile) {
+    saveDraft(state.currentFile.path, newContent);
+  }
   const filenameEl = document.getElementById('editorFilename');
   const dirtyEl = document.getElementById('editorDirty');
   const baseName = state.currentFile ? state.currentFile.name : '';

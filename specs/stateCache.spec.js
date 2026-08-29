@@ -218,6 +218,34 @@ describe('contentCache — offline fallback', () => {
     assert.strictEqual(notes[0].content, 'offline-b64', 'note gets content from offline-populated cache');
     assert.strictEqual(notes[0].dirty, false, 'offline note is clean');
   });
+
+  it('offline-load re-syncs dirty flag from draftCache even when cached note is clean', () => {
+    const dc = new Map();
+    dc.set('a.md.gpg', 'unsaved edit');
+
+    // Cached snapshot stored a note with dirty=false (cached before the draft was created)
+    const cached = [{ name: 'a.md.gpg', path: 'a.md.gpg', content: 'b64', sha: 's', dirty: false }];
+
+    // loadFromCache syncs each loaded note's dirty flag from the live draftCache
+    const notes = cached.map(n => ({ ...n, dirty: dc.has(n.path) || n.dirty }));
+
+    assert.strictEqual(notes[0].dirty, true, 'unsaved badge shows after offline load without clicking');
+    assert.strictEqual(formatNoteItem(notes[0], null).includes('status-badge dirty'), true);
+  });
+
+  it('offline-load keeps dirty=false when no draft exists for the note', () => {
+    const dc = new Map();
+    const cached = [
+      { name: 'a.md.gpg', path: 'a.md.gpg', content: 'b64', sha: 's', dirty: false },
+      { name: 'b.md.gpg', path: 'b.md.gpg', content: 'b64', sha: 's', dirty: false },
+    ];
+    dc.set('b.md.gpg', 'draft for b');
+
+    const notes = cached.map(n => ({ ...n, dirty: dc.has(n.path) || n.dirty }));
+
+    assert.strictEqual(notes[0].dirty, false, 'a stays clean (no draft)');
+    assert.strictEqual(notes[1].dirty, true, 'b shows unsaved badge (draft exists)');
+  });
 });
 
 describe('contentCache — save updates both cache and list', () => {

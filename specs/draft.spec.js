@@ -133,3 +133,67 @@ describe('persistDrafts / restoreDrafts', () => {
     globalThis.localStorage = saved;
   });
 });
+
+describe('draft survives app close / reopen while offline', () => {
+  let ls;
+
+  before(() => {
+    ls = {};
+    globalThis.localStorage = {
+      getItem: k => ls[k] ?? null,
+      setItem: (k, v) => {
+        ls[k] = v;
+      },
+      removeItem: k => {
+        delete ls[k];
+      },
+    };
+  });
+
+  beforeEach(() => {
+    ls = {};
+    draftCache.clear();
+  });
+
+  after(() => {
+    draftCache.clear();
+  });
+
+  it('edit saved as draft on each input survives closing and reopening the app', () => {
+    const path = 'notes/e.md.gpg';
+
+    // Editing fires onEditorInput which saves the draft immediately (persisted to localStorage).
+    saveDraft(path, '# Edited offline');
+
+    // Simulate closing the app: in-memory state is lost, storage persists.
+    draftCache.clear();
+    assert.equal(draftCache.has(path), false, 'in-memory draft gone after close');
+
+    // Simulate reopening the app offline: restoreDrafts hydrates from localStorage.
+    restoreDrafts();
+    assert.equal(draftCache.get(path), '# Edited offline', 'draft recovered after reopening');
+  });
+
+  it('keeps updating the saved draft as the edit continues', () => {
+    const path = 'notes/f.md.gpg';
+
+    saveDraft(path, 'v1');
+    saveDraft(path, 'v2 longer edit');
+
+    draftCache.clear();
+    restoreDrafts();
+    assert.equal(draftCache.get(path), 'v2 longer edit', 'latest draft content recovered');
+  });
+
+  it('clears the draft from storage once the note is saved', () => {
+    const path = 'notes/g.md.gpg';
+
+    saveDraft(path, '# Unsaved edit');
+    assert.equal(localStorage.getItem('memoweb_drafts').includes(path), true, 'draft persisted on edit');
+
+    // saveNote calls removeDraft on success, which persists from localStorage too.
+    removeDraft(path);
+    const persisted = JSON.parse(localStorage.getItem('memoweb_drafts') || '{}');
+    assert.equal(persisted[path], undefined, 'draft cleared from storage after save');
+  });
+});
