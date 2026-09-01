@@ -1,7 +1,15 @@
 import { describe, it, before, after, beforeEach } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { contentCache, draftCache, persistDrafts, restoreDrafts, saveDraft, removeDraft } from '../lib/draft.js';
-
+import {
+  contentCache,
+  draftCache,
+  persistDrafts,
+  restoreDrafts,
+  saveDraft,
+  removeDraft,
+  removeCachedContent,
+  pruneContentCache,
+} from '../lib/draft.js';
 describe('contentCache', () => {
   before(() => contentCache.clear());
   after(() => contentCache.clear());
@@ -25,6 +33,69 @@ describe('contentCache', () => {
     contentCache.delete('notes/test.md.gpg');
     assert.equal(contentCache.get('notes/test.md.gpg'), undefined);
     assert.equal(contentCache.size, 0);
+  });
+});
+
+describe('removeCachedContent', () => {
+  before(() => contentCache.clear());
+  after(() => contentCache.clear());
+
+  it('removes a single cached entry', () => {
+    contentCache.set('notes/a.md.gpg', 'b64');
+    removeCachedContent('notes/a.md.gpg');
+    assert.equal(contentCache.get('notes/a.md.gpg'), undefined);
+    assert.equal(contentCache.size, 0);
+  });
+
+  it('is a no-op for missing keys', () => {
+    contentCache.set('notes/a.md.gpg', 'b64');
+    removeCachedContent('notes/nope.md.gpg');
+    assert.equal(contentCache.size, 1);
+  });
+});
+
+describe('pruneContentCache', () => {
+  before(() => contentCache.clear());
+  after(() => contentCache.clear());
+
+  beforeEach(() => contentCache.clear());
+
+  it('removes stale entries in the pruned subtree', () => {
+    contentCache.set('notes/kept.md.gpg', 'b64');
+    contentCache.set('notes/deleted.md.gpg', 'b64');
+    contentCache.set('other/deleted.md.gpg', 'b64');
+
+    pruneContentCache([{ path: 'notes/kept.md.gpg' }], 'notes');
+
+    assert.equal(contentCache.get('notes/kept.md.gpg'), 'b64');
+    assert.equal(contentCache.get('notes/deleted.md.gpg'), undefined);
+  });
+
+  it('does not prune notes outside the pruned subtree (keeps cross-dir search)', () => {
+    contentCache.set('notes/a.md.gpg', 'b64');
+    contentCache.set('other/b.md.gpg', 'b64');
+
+    pruneContentCache([{ path: 'notes/a.md.gpg' }], 'notes');
+
+    assert.equal(contentCache.get('other/b.md.gpg'), 'b64');
+  });
+
+  it('handles root dirPath prefix correctly', () => {
+    contentCache.set('a.md.gpg', 'b64');
+    contentCache.set('sub/c.md.gpg', 'b64');
+
+    pruneContentCache([{ path: 'a.md.gpg' }], '');
+
+    assert.equal(contentCache.get('a.md.gpg'), 'b64');
+    assert.equal(contentCache.get('sub/c.md.gpg'), undefined);
+  });
+
+  it('treats an empty live list as removing all in the subtree', () => {
+    contentCache.set('notes/a.md.gpg', 'b64');
+
+    pruneContentCache([], 'notes');
+
+    assert.equal(contentCache.get('notes/a.md.gpg'), undefined);
   });
 });
 

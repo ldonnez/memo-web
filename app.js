@@ -29,7 +29,15 @@ import {
   findMatchRanges,
   withTimeout,
 } from './lib/util.js';
-import { contentCache, draftCache, restoreDrafts, saveDraft, removeDraft } from './lib/draft.js';
+import {
+  contentCache,
+  draftCache,
+  restoreDrafts,
+  saveDraft,
+  removeDraft,
+  removeCachedContent,
+  pruneContentCache,
+} from './lib/draft.js';
 import {
   parseEntries,
   buildStatusText,
@@ -191,16 +199,18 @@ async function saveSettings() {
 // ============= CONNECT & LIST =============
 const CONNECT_TIMEOUT_MS = 15000;
 
-async function connect() {
+async function connect(background = false) {
   const c = state.config;
   if (!c.ghToken || !c.ghOwner || !c.ghRepo) {
     setConnectionStatus('Configure settings first', false);
     return;
   }
 
-  setConnectionStatus('Connecting...', false);
-  state = { ...state, notes: [], dirs: [] };
-  renderNoteList();
+  if (!background) {
+    setConnectionStatus('Connecting...', false);
+    state = { ...state, notes: [], dirs: [] };
+    renderNoteList();
+  }
 
   const controller = new AbortController();
   try {
@@ -219,6 +229,7 @@ async function connect() {
 async function doConnect(c, signal) {
   const path = c.ghPath || '';
   const ext = c.fileExt || '.md.gpg';
+  const token = state.currentBrowsePath;
   console.log('Connecting to', `${c.ghOwner}/${c.ghRepo}`, 'path:', path, 'branch:', c.ghBranch);
 
   // Verify repo exists and is accessible
@@ -237,6 +248,7 @@ async function doConnect(c, signal) {
 
   const entries = path ? await ghListDir(state.config, path) : await ghListDir(state.config, '');
   if (signal.aborted) return;
+  if (state.currentBrowsePath !== token) return;
 
   if (!Array.isArray(entries)) {
     console.warn('Unexpected response from GitHub API, expected array, got:', entries);
@@ -248,8 +260,10 @@ async function doConnect(c, signal) {
 
   const { dirs, notes } = parseEntries(entries, ext);
   state = { ...state, dirs, notes, currentBrowsePath: path };
+  pruneContentCache(notes, path);
   state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) };
   if (signal.aborted) return;
+  if (state.currentBrowsePath !== token) return;
 
   setConnectionStatus(`Connected · ${buildStatusText(state.notes.length, state.dirs.length)}`, true);
   renderNoteList();
@@ -286,6 +300,7 @@ async function pullChanges() {
 
   const currentPath = state.currentBrowsePath;
   const ext = c.fileExt || '.md.gpg';
+  const token = state.currentBrowsePath + '|' + (state.currentFile?.path || '');
 
   setConnectionStatus('Syncing...', state.connected);
 
@@ -293,9 +308,11 @@ async function pullChanges() {
     const entries = await ghListDir(state.config, currentPath || '');
     if (Array.isArray(entries)) {
       const { dirs, notes } = parseEntries(entries, ext);
+      pruneContentCache(notes, currentPath);
       state = { ...state, dirs, notes };
       renderNoteList();
     }
+    if (state.currentBrowsePath + '|' + (state.currentFile?.path || '') !== token) return;
 
     const openFile = state.currentFile;
     if (openFile) {
@@ -305,6 +322,7 @@ async function pullChanges() {
         if (data) {
           const binary = Uint8Array.from(atob(data.content), c => c.charCodeAt(0));
           const decrypted = await decryptContent(state.config, binary);
+          if (state.currentFile?.path !== openFile.path) return;
           const updatedNote = { ...openFile, sha: data.sha, content: data.content, decrypted, dirty: false };
           state = {
             ...state,
@@ -324,6 +342,7 @@ async function pullChanges() {
     }
 
     state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) };
+    if (state.currentBrowsePath + '|' + (state.currentFile?.path || '') !== token) return;
 
     setConnectionStatus(`Synced · ${buildStatusText(state.notes.length, state.dirs.length)}`, true);
     renderNoteList();
@@ -464,9 +483,11 @@ async function navigateToDir(dirPath) {
 
   setConnectionStatus('Loading...', state.connected);
   const c = state.config;
+  const token = state.currentBrowsePath;
 
   try {
     const entries = await ghListDir(state.config, dirPath || '');
+    if (state.currentBrowsePath !== token) return;
     if (!Array.isArray(entries)) {
       setConnectionStatus('Connected', true);
       return;
@@ -476,13 +497,16 @@ async function navigateToDir(dirPath) {
     const { dirs, notes } = parseEntries(entries, ext);
     state = { ...state, dirs, notes, currentBrowsePath: dirPath, currentFile: null, isDirty: false };
     closeEditor();
+    pruneContentCache(notes, dirPath);
 
     state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) };
+    if (state.currentBrowsePath !== token) return;
 
     setConnectionStatus(`Connected · ${buildStatusText(state.notes.length, state.dirs.length)}`, true);
     renderNoteList();
     await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath);
   } catch (e) {
+    if (state.currentBrowsePath !== token) return;
     console.error('Directory navigation error:', e);
     state = { ...state, currentFile: null, isDirty: false };
     closeEditor();
@@ -542,6 +566,7 @@ async function selectNote(path) {
     if (!note.content) {
       const data = await ghGetFile(state.config, note.path);
       if (!data) throw new Error('File not found');
+      if (state.currentFile?.path !== note.path) return;
       const updatedNote = { ...note, content: data.content, sha: data.sha };
       state = {
         ...state,
@@ -553,6 +578,7 @@ async function selectNote(path) {
 
     const binary = Uint8Array.from(atob(note.content), c => c.charCodeAt(0));
     const decrypted = await decryptContent(state.config, binary);
+    if (state.currentFile?.path !== note.path) return;
     const clean = markNoteClean(note, state.notes, decrypted);
     state = {
       ...state,
@@ -1048,7 +1074,10 @@ async function deleteNote() {
 
   try {
     await ghDeleteFile(state.config, state.currentFile.path, state.currentFile.sha, commitMsg());
-    state = { ...state, notes: state.notes.filter(n => n.path !== state.currentFile.path) };
+    const deletedPath = state.currentFile.path;
+    removeDraft(deletedPath);
+    removeCachedContent(deletedPath);
+    state = { ...state, notes: state.notes.filter(n => n.path !== deletedPath) };
     closeEditor();
     toast('Note deleted', 'info');
     renderNoteList();
@@ -1208,13 +1237,10 @@ loadConfig();
 async function init() {
   restoreDrafts();
   if (state.config.ghToken && state.config.ghOwner && state.config.ghRepo) {
-    try {
-      await connect();
-      const path = getUrlParam('path');
-      if (path) openNoteByPath(path);
-    } catch (e) {
-      console.error('Initial connect failed:', e);
-    }
+    await loadFromCache(state.config.ghPath || '');
+    const path = getUrlParam('path');
+    if (path) openNoteByPath(path);
+    connect(true).catch(e => console.error('Background connect failed:', e));
   }
 }
 init();
