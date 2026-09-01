@@ -122,6 +122,13 @@ describe('buildStatusText', () => {
   });
 });
 
+function mockFetchTimeout() {
+  globalThis.fetch = (_url, opts) =>
+    new Promise((_, reject) => {
+      opts.signal.addEventListener('abort', () => reject(opts.signal.reason || new Error('Aborted')));
+    });
+}
+
 describe('gh (raw API)', () => {
   it('sends GET request with auth headers and returns JSON', async () => {
     mockFetch(200, { id: 1, name: 'test' });
@@ -155,6 +162,13 @@ describe('gh (raw API)', () => {
     const result = await gh(makeConfig(), 'DELETE', '/repos/o/r/contents/p');
     assert.equal(result, null);
   });
+
+  it('rejects with a timeout error when the request exceeds ghTimeoutMs', async () => {
+    mockFetchTimeout();
+    await assert.rejects(() => gh(makeConfig({ ghTimeoutMs: 30 }), 'GET', '/repos/o/r'), {
+      message: /Request timed out/,
+    });
+  });
 });
 
 describe('verifyRepo', () => {
@@ -181,6 +195,13 @@ describe('verifyRepo', () => {
       throw new Error('Something unexpected');
     };
     await assert.rejects(() => verifyRepo(makeConfig()), { message: /Something unexpected/ });
+  });
+
+  it('rejects with a timeout error when the request exceeds ghTimeoutMs', async () => {
+    mockFetchTimeout();
+    await assert.rejects(() => verifyRepo(makeConfig({ ghTimeoutMs: 30 })), {
+      message: /Request timed out/,
+    });
   });
 });
 

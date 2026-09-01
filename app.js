@@ -27,6 +27,7 @@ import {
   listCachedNotePaths,
   pickBestCachedRecord,
   findMatchRanges,
+  withTimeout,
 } from './lib/util.js';
 import { contentCache, draftCache, restoreDrafts, saveDraft, removeDraft } from './lib/draft.js';
 import {
@@ -188,6 +189,8 @@ async function saveSettings() {
 }
 
 // ============= CONNECT & LIST =============
+const CONNECT_TIMEOUT_MS = 15000;
+
 async function connect() {
   const c = state.config;
   if (!c.ghToken || !c.ghOwner || !c.ghRepo) {
@@ -199,59 +202,68 @@ async function connect() {
   state = { ...state, notes: [], dirs: [] };
   renderNoteList();
 
+  const controller = new AbortController();
   try {
-    const path = c.ghPath || '';
-    const ext = c.fileExt || '.md.gpg';
-    console.log('Connecting to', `${c.ghOwner}/${c.ghRepo}`, 'path:', path, 'branch:', c.ghBranch);
-
-    // Verify repo exists and is accessible
-    const repoData = await verifyRepo(state.config);
-    console.log('Repo found:', repoData.full_name, 'default branch:', repoData.default_branch);
-    document.getElementById('sidebarTitle').textContent = repoData.name;
-
-    // Use the repo's default branch if user didn't specify one
-    if (!c.ghBranch || c.ghBranch === 'main') {
-      const branch = repoData.default_branch || 'main';
-      if (state.config.ghBranch !== branch) {
-        state = { ...state, config: { ...state.config, ghBranch: branch } };
-      }
-    }
-
-    const entries = path ? await ghListDir(state.config, path) : await ghListDir(state.config, '');
-
-    if (!Array.isArray(entries)) {
-      console.warn('Unexpected response from GitHub API, expected array, got:', entries);
-      setConnectionStatus('Connected', true);
-      renderNoteList();
-      byId('newNoteBtn').disabled = false;
-      return;
-    }
-
-    const { dirs, notes } = parseEntries(entries, ext);
-    state = { ...state, dirs, notes, currentBrowsePath: path };
-    state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) };
-
-    setConnectionStatus(`Connected · ${buildStatusText(state.notes.length, state.dirs.length)}`, true);
-    renderNoteList();
-    await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath);
-    setTimeout(
-      () => walkAllDirsAndPrefetch(state.config, path, ext).catch(e => console.warn('background sync:', e.message)),
-      0,
-    );
-    byId('newNoteBtn').disabled = false;
-
-    if (state.currentFile) {
-      const stillExists = state.notes.find(n => n.path === state.currentFile.path);
-      if (!stillExists) {
-        closeEditor();
-      }
-    }
+    await withTimeout(doConnect(c, controller), CONNECT_TIMEOUT_MS, () => controller.abort());
   } catch (e) {
+    controller.abort();
     console.error('Connection error:', e);
     const fallbackPath = c.ghPath || state.currentBrowsePath;
     if (!(await loadFromCache(fallbackPath))) {
       setConnectionStatus(`Error: ${e.message}`, false);
       toast(e.message, 'error');
+    }
+  }
+}
+
+async function doConnect(c, signal) {
+  const path = c.ghPath || '';
+  const ext = c.fileExt || '.md.gpg';
+  console.log('Connecting to', `${c.ghOwner}/${c.ghRepo}`, 'path:', path, 'branch:', c.ghBranch);
+
+  // Verify repo exists and is accessible
+  const repoData = await verifyRepo(state.config);
+  if (signal.aborted) return;
+  console.log('Repo found:', repoData.full_name, 'default branch:', repoData.default_branch);
+  document.getElementById('sidebarTitle').textContent = repoData.name;
+
+  // Use the repo's default branch if user didn't specify one
+  if (!c.ghBranch || c.ghBranch === 'main') {
+    const branch = repoData.default_branch || 'main';
+    if (state.config.ghBranch !== branch) {
+      state = { ...state, config: { ...state.config, ghBranch: branch } };
+    }
+  }
+
+  const entries = path ? await ghListDir(state.config, path) : await ghListDir(state.config, '');
+  if (signal.aborted) return;
+
+  if (!Array.isArray(entries)) {
+    console.warn('Unexpected response from GitHub API, expected array, got:', entries);
+    setConnectionStatus('Connected', true);
+    renderNoteList();
+    byId('newNoteBtn').disabled = false;
+    return;
+  }
+
+  const { dirs, notes } = parseEntries(entries, ext);
+  state = { ...state, dirs, notes, currentBrowsePath: path };
+  state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) };
+  if (signal.aborted) return;
+
+  setConnectionStatus(`Connected · ${buildStatusText(state.notes.length, state.dirs.length)}`, true);
+  renderNoteList();
+  await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath);
+  setTimeout(
+    () => walkAllDirsAndPrefetch(state.config, path, ext).catch(e => console.warn('background sync:', e.message)),
+    0,
+  );
+  byId('newNoteBtn').disabled = false;
+
+  if (state.currentFile) {
+    const stillExists = state.notes.find(n => n.path === state.currentFile.path);
+    if (!stillExists) {
+      closeEditor();
     }
   }
 }
