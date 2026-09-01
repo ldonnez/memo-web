@@ -30,7 +30,7 @@ CI order: `npm install → npm run format:check → npm run lint → npm test` (
 ## Architecture
 
 - **`index.html`** — shell with all CSS in `<style>`, CDN scripts in `<head>`, DOMPurify `<script>` + `<script type="module" src="app.js">` at end of `<body>`.
-- **`app.js`** — application shell: state management, CodeMirror 5 editor, settings, preview rendering, pull-to-refresh. Entry point at bottom: `loadConfig()` then `init()`.
+- **`app.js`** — application shell: state management, CodeMirror 5 editor, settings, preview rendering, iOS keyboard/viewport sizing. Entry point at bottom: `loadConfig()` then `init()`.
 - **`sw.js`** — service worker. Caching: local assets stale-while-revalidate, CDN cache-first, API network-only, index.html network-first.
 - **`lib/crypto.js`** — `encryptContent`/`decryptContent` using OpenPGP.js (symmetric or asymmetric).
 - **`lib/update.js`** — `onUpdateAvailable` + `applyUpdate` for SW lifecycle.
