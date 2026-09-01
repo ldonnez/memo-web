@@ -1204,20 +1204,69 @@ window.addEventListener('load', syncHeaderH);
 window.addEventListener('resize', syncHeaderH);
 window.addEventListener('orientationchange', () => setTimeout(syncHeaderH, 100));
 
-// Size the layout to the visual viewport so the iOS keyboard doesn't leave a black gap
-function syncViewport() {
+// Size the layout to the visual viewport so the iOS keyboard doesn't leave a black gap.
+// On iOS the keyboard is an overlay that never shrinks the layout viewport (dvh/100vh
+// ignore it); only visualViewport.height reflects the visible area. The app is docked
+// with overflow:hidden so the webview can't scroll the document and displace the layout.
+function currentAppHeight() {
   const vv = window.visualViewport;
-  if (!vv) return;
-  const value = vv.height + 'px';
-  if (document.documentElement.style.getPropertyValue('--app-h') !== value) {
+  if (!vv) return null;
+  return vv.height + 'px';
+}
+function syncViewport() {
+  const value = currentAppHeight();
+  if (value && document.documentElement.style.getPropertyValue('--app-h') !== value) {
     document.documentElement.style.setProperty('--app-h', value);
   }
+}
+// iOS 26 does not reliably emit visualViewport resize/scroll when the keyboard appears,
+// so re-sync on focus/input and briefly poll while the keyboard is up.
+let keyboardPollTimer = null;
+function stopViewportPolling() {
+  if (keyboardPollTimer) {
+    clearInterval(keyboardPollTimer);
+    keyboardPollTimer = null;
+  }
+  syncViewport();
+  document.removeEventListener('touchend', stopViewportPolling, true);
+}
+function pollViewportWhileFocused() {
+  if (!window.visualViewport) return;
+  if (keyboardPollTimer) clearInterval(keyboardPollTimer);
+  keyboardPollTimer = setInterval(syncViewport, 150);
+  setTimeout(stopViewportPolling, 3000);
+  document.addEventListener('touchend', stopViewportPolling, true);
+  syncViewport();
+}
+// iOS 26 standalone PWA bug: after the keyboard dismisses, the viewport can stay
+// shrunk ("dead black band") until the app is force-quit. Force a re-measure on blur.
+function healViewport() {
+  stopViewportPolling();
+  const el = document.getElementById('editor');
+  if (!el || el.style.display === 'none') return;
+  el.style.display = 'none';
+  void el.offsetHeight;
+  el.style.display = 'flex';
+  syncViewport();
+}
+function hookKeyboardFocus(el) {
+  if (!el) return;
+  el.addEventListener('focus', pollViewportWhileFocused);
+  el.addEventListener('input', syncViewport);
+  el.addEventListener('blur', () => setTimeout(healViewport, 350));
 }
 if (window.visualViewport) {
   window.visualViewport.addEventListener('resize', syncViewport);
   window.visualViewport.addEventListener('scroll', syncViewport);
 }
-document.addEventListener('DOMContentLoaded', syncViewport);
+document.addEventListener('DOMContentLoaded', () => {
+  syncViewport();
+  hookKeyboardFocus(document.getElementById('editorContent'));
+  if (cm) {
+    cm.on('focus', pollViewportWhileFocused);
+    cm.on('blur', () => setTimeout(healViewport, 350));
+  }
+});
 
 // Close sidebar when selecting a note on mobile
 document.addEventListener('click', e => {

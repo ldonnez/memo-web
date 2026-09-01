@@ -164,12 +164,17 @@
         padding: 0;
         box-sizing: border-box;
       }
+      html {
+        height: 100%;
+        overflow: hidden;
+      }
       body {
         font-family: var(--font);
         background: var(--bg);
         color: var(--text);
         line-height: 1.5;
-        min-height: 100vh;
+        height: 100%;
+        overflow: hidden;
       }
       a {
         color: var(--accent);
@@ -969,8 +974,7 @@
           left: -300px;
           width: 300px;
           max-width: 85vw;
-          height: calc(100vh - var(--header-h));
-          height: calc(100dvh - var(--header-h));
+          height: calc(var(--app-h) - var(--header-h));
           padding-bottom: var(--sab);
           z-index: 160;
           border-right: 1px solid var(--border);

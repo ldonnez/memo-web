@@ -56,6 +56,7 @@ CI order: `npm install → npm run format:check → npm run lint → npm test` (
 
 ## iOS / PWA quirks
 
+- **Keyboard / viewport**: iOS treats the keyboard as an overlay (`dvh`/`100vh` never shrink — only `visualViewport.height` does). The app is docked (`html, body { height: 100%; overflow: hidden }`), and `--app-h` = `visualViewport.height` is applied via `syncViewport()` (app.js). iOS 26 emits unreliable `visualViewport` resize/scroll events for keyboard opens, so `syncViewport` is also polled on focus and called on input; `healViewport()` re-measures on blur for the iOS 26 standalone-PWA bug where the viewport stays shrunk after keyboard dismiss.
 - **CSS Highlights API**: used unconditionally — `CSS.highlights` is available in all modern browsers. `CSS.highlights.clear()` called directly, no feature detection or try/catch.
 - **Inputs must be `font-size: 16px`** to prevent iOS auto-zoom on focus.
 - **Service worker**: registered via `import('./lib/update.js')` (dynamic import avoids inline `<script>` block). SW `skipWaiting()` on install + `clients.claim()` on activate.
