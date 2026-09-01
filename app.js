@@ -1163,6 +1163,21 @@ window.addEventListener('load', syncHeaderH);
 window.addEventListener('resize', syncHeaderH);
 window.addEventListener('orientationchange', () => setTimeout(syncHeaderH, 100));
 
+// Size the layout to the visual viewport so the iOS keyboard doesn't leave a black gap
+function syncViewport() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const value = vv.height + 'px';
+  if (document.documentElement.style.getPropertyValue('--app-h') !== value) {
+    document.documentElement.style.setProperty('--app-h', value);
+  }
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncViewport);
+  window.visualViewport.addEventListener('scroll', syncViewport);
+}
+document.addEventListener('DOMContentLoaded', syncViewport);
+
 // Close sidebar when selecting a note on mobile
 document.addEventListener('click', e => {
   const sidebar = document.getElementById('sidebar');
