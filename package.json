@@ -11,6 +11,8 @@
     "lint:fix": "eslint --fix ."
   },
   "devDependencies": {
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
     "eslint": "^10.9.1",
     "globals": "^17.11.0",
     "openpgp": "^6.3.1",
