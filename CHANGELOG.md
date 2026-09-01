@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/ldonnez/memo-web/compare/v0.2.0...v0.2.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* don't show whitespace when keyboard pulls up ([19010da](https://github.com/ldonnez/memo-web/commit/19010da5003564040ec75b6bd32f6463ee0aabb1))
+
 ## [0.2.0](https://github.com/ldonnez/memo-web/compare/v0.1.0...v0.2.0) (2026-09-01)
 
 
