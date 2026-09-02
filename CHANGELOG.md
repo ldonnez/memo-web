@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0](https://github.com/ldonnez/memo-web/compare/v0.2.2...v0.3.0) (2026-09-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* update to CodeMirror 6 and use Vite
+
+### Code Refactoring
+
+* update to CodeMirror 6 and use Vite ([1a3f1f4](https://github.com/ldonnez/memo-web/commit/1a3f1f434f070e895f846bda4bcb9d160118552b))
+
 ## [0.2.2](https://github.com/ldonnez/memo-web/compare/v0.2.1...v0.2.2) (2026-09-01)
 
 
