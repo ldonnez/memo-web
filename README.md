@@ -12,7 +12,7 @@ Client-side web app for managing GPG-encrypted markdown notes stored in a privat
 - 🔒 All encryption/decryption happens in-browser (OpenPGP.js) — server never sees plaintext
 - 📦 Notes live in any GitHub repo via the Contents API
 - 🔑 Symmetric (passphrase) or asymmetric (GPG key) encryption
-- ✏️ Markdown editing with CodeMirror 5, live preview with syntax highlighting
+- ✏️ Markdown editing with CodeMirror 6, live preview with syntax highlighting
 - 📱 PWA — add to home screen, works offline, auto-updates on new version
 - 🔐 Armored PGP format compatible with `gpg` CLI
 
@@ -27,7 +27,7 @@ device or browser extension could exfiltrate your credentials.
 
 When hosted on HTTPS, the app registers a Service Worker that:
 
-- **Precaches** all local assets and CDN libraries for offline use
+- **Precaches** all bundled local assets for offline use
 - **Caches** GitHub API responses (network-first, falls back to cache)
 - **Auto-updates** — when a new version is detected, a banner appears asking
   the user to reload
@@ -38,13 +38,13 @@ install icon in the address bar.
 ## Run locally
 
 ```sh
-npm run dev      # dev server at http://localhost:8080
-npm test         # 49 unit tests (crypto round-trip, util, UI helpers)
+npm run dev      # Vite dev server (HMR) at http://localhost:8080
+npm test         # unit tests (crypto round-trip, util, UI helpers)
 npm run lint     # ESLint
 npm run format   # Prettier
 ```
 
 > **Why a dev server?** The app uses ES modules (`<script type="module">`) and
 > a Service Worker, which require HTTP and don't work when opening `index.html`
-> directly via `file://`. Any static server works — `npx serve .`,
-> `python3 -m http.server`, etc.
+> directly via `file://`. `npm run dev` starts Vite; for a production check use
+> `npm run build` then `npm run preview`.

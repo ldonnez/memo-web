@@ -2,7 +2,7 @@ import globals from 'globals';
 
 export default [
   {
-    ignores: ['package-lock.json', 'node_modules/', '.github/'],
+    ignores: ['package-lock.json', 'node_modules/', '.github/', 'dist/'],
   },
   {
     files: ['**/*.js'],
@@ -12,14 +12,6 @@ export default [
       globals: {
         ...globals.browser,
         ...globals.es2024,
-        // CDN-injected
-        CodeMirror: 'readonly',
-        marked: 'readonly',
-        DOMPurify: 'readonly',
-        hljs: 'readonly',
-        openpgp: 'readonly',
-        prettier: 'readonly',
-        prettierPlugins: 'writable',
         // Web APIs not in globals.browser
         MutationObserver: 'readonly',
       },
@@ -32,7 +24,7 @@ export default [
     },
   },
   {
-    files: ['scripts/**/*.js', 'test/**/*.js', 'specs/**/*.js'],
+    files: ['specs/**/*.js'],
     languageOptions: {
       globals: {
         ...globals.node,

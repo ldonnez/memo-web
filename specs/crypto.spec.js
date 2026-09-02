@@ -1,17 +1,12 @@
 import { strict as assert } from 'node:assert';
 import { describe, it, before } from 'node:test';
 import * as openpgp from 'openpgp';
+import { encryptContent, decryptContent } from '../lib/crypto.js';
 
-let encryptContent, decryptContent;
 let keyConfig;
 let armoredBytes; // valid armored message bytes for config-missing tests
 
 before(async () => {
-  globalThis.openpgp = openpgp;
-  const mod = await import('../lib/crypto.js');
-  encryptContent = mod.encryptContent;
-  decryptContent = mod.decryptContent;
-
   const key = await openpgp.generateKey({
     type: 'ecc',
     curve: 'curve25519',

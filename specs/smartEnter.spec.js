@@ -1,4 +1,4 @@
-import { describe, it, before } from 'node:test';
+import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
 import {
   smartEnter,
@@ -10,13 +10,10 @@ import {
   toggleTaskOnLine,
   insertMarkdown,
   insertTimestamp,
+  PASS,
 } from '../lib/editor.js';
 
 describe('smartEnter', () => {
-  before(() => {
-    globalThis.CodeMirror = { Pass: Symbol('pass') };
-  });
-
   it('replaces [x] with [ ] in the new line prefix', () => {
     const calls = [];
     const cm = {
@@ -66,7 +63,7 @@ describe('smartEnter', () => {
       getLine: () => '- [x] done task',
       replaceRange: () => assert.fail('should not be called'),
     };
-    assert.equal(smartEnter(cm, { formatTable: () => {}, onEditorInput: () => {} }), globalThis.CodeMirror.Pass);
+    assert.equal(smartEnter(cm, { formatTable: () => {}, onEditorInput: () => {} }), PASS);
   });
 
   it('removes the line when the rest after prefix is empty', () => {
@@ -190,15 +187,11 @@ describe('smartEnter', () => {
       getLine: () => 'plain text',
       replaceRange: () => assert.fail('should not be called'),
     };
-    assert.equal(smartEnter(cm, { formatTable: () => {}, onEditorInput: () => {} }), globalThis.CodeMirror.Pass);
+    assert.equal(smartEnter(cm, { formatTable: () => {}, onEditorInput: () => {} }), PASS);
   });
 });
 
 describe('toggleTaskByIndex', () => {
-  before(() => {
-    globalThis.CodeMirror = { Pass: Symbol('pass') };
-  });
-
   it('toggles [ ] to [x] at the given index', () => {
     const calls = [];
     const cm = {
@@ -276,10 +269,6 @@ describe('toggleTaskByIndex', () => {
 });
 
 describe('formatTable', () => {
-  before(() => {
-    globalThis.CodeMirror = { Pass: Symbol('pass') };
-  });
-
   it('inserts a new empty row below the table', () => {
     let setValueCalled = false;
     const cm = {
@@ -348,10 +337,6 @@ describe('formatTable', () => {
 });
 
 describe('moveInTable', () => {
-  before(() => {
-    globalThis.CodeMirror = { Pass: Symbol('pass') };
-  });
-
   it('moves to the next cell on a table row', () => {
     const calls = [];
     const cm = {
@@ -449,10 +434,6 @@ describe('moveInTable', () => {
 });
 
 describe('handleTab / handleShiftTab', () => {
-  before(() => {
-    globalThis.CodeMirror = { Pass: Symbol('pass') };
-  });
-
   it('handleTab calls moveInTable then falls back to insertSoftTab', () => {
     let softTabCalled = false;
     const cm = {
@@ -487,15 +468,11 @@ describe('handleTab / handleShiftTab', () => {
       getLine: () => '- list item',
       setCursor: () => assert.fail('should not be called'),
     };
-    assert.equal(handleShiftTab(cm), globalThis.CodeMirror.Pass);
+    assert.equal(handleShiftTab(cm), PASS);
   });
 });
 
 describe('toggleTaskOnLine', () => {
-  before(() => {
-    globalThis.CodeMirror = { Pass: Symbol('pass') };
-  });
-
   it('toggles [ ] to [x] on the current line', () => {
     const calls = [];
     const cm = {
@@ -602,10 +579,6 @@ describe('toggleTaskOnLine', () => {
 });
 
 describe('insertMarkdown', () => {
-  before(() => {
-    globalThis.CodeMirror = { Pass: Symbol('pass') };
-  });
-
   it('wraps selection with markdown syntax', () => {
     const cm = {
       getSelection: () => 'selected text',
@@ -716,10 +689,6 @@ describe('insertMarkdown', () => {
 });
 
 describe('insertTimestamp', () => {
-  before(() => {
-    globalThis.CodeMirror = { Pass: Symbol('pass') };
-  });
-
   it('inserts YYYY-MM-DD format via insertMarkdown', () => {
     let calledWith = null;
     const cm = {

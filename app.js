@@ -8,7 +8,9 @@ import {
   formatTable,
   insertMarkdown,
   insertTimestamp,
+  PASS,
 } from './lib/editor.js';
+import { createEditor } from './lib/cm.js';
 import {
   escHtml,
   getUrlParam,
@@ -49,6 +51,12 @@ import {
   fetchAllNotesContent,
   walkAllDirsAndPrefetch,
 } from './lib/github.js';
+import hljs from './lib/hljs.js';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+import { registerSW } from 'virtual:pwa-register';
+
+registerSW({ immediate: true, onRegisteredSW: () => {} });
 
 // ============= STATE =============
 let cm = null;
@@ -430,30 +438,19 @@ function renderNoteList() {
 
 function formatDoc() {
   if (!cm || !state.currentFile) return;
-  if (typeof prettier === 'undefined' || !window.prettierPlugins) {
-    // Lazy-load Prettier
-    const s1 = document.createElement('script');
-    s1.src = 'https://cdn.jsdelivr.net/npm/prettier@3/standalone.js';
-    s1.onload = function () {
-      const s2 = document.createElement('script');
-      s2.src = 'https://cdn.jsdelivr.net/npm/prettier@3/plugins/markdown.js';
-      s2.onload = formatDoc;
-      document.head.appendChild(s2);
-    };
-    document.head.appendChild(s1);
-    return;
-  }
-  const text = cm.getValue(),
-    cursor = cm.getCursor(),
-    scrollInfo = cm.getScrollInfo();
-  Promise.resolve(prettier.format(text, { parser: 'markdown', plugins: [window.prettierPlugins.markdown] })).then(
-    function (formatted) {
+  import('prettier')
+    .then(prettier => Promise.all([prettier, import('prettier/plugins/markdown')]))
+    .then(([prettier, { default: markdown }]) =>
+      prettier.format(cm.getValue(), { parser: 'markdown', plugins: [markdown] }),
+    )
+    .then(formatted => {
+      const cursor = cm.getCursor(),
+        scrollInfo = cm.getScrollInfo();
       cm.setValue(formatted);
       cm.setCursor(cursor, null, { scroll: false });
       cm.scrollTo(scrollInfo.left, scrollInfo.top);
       onEditorInput();
-    },
-  );
+    });
 }
 
 async function openNoteByPath(path) {
@@ -608,45 +605,39 @@ function closeEditor() {
 
 // ============= EDITOR =============
 document.addEventListener('DOMContentLoaded', () => {
-  // Init CodeMirror
+  // Init editor (CodeMirror 6 via adapter in lib/cm.js)
   const ta = document.getElementById('editorContent');
-  if (typeof CodeMirror !== 'undefined') {
-    // Register short language names for fenced code block highlighting
-    CodeMirror.defineMIME('json', 'javascript');
-    CodeMirror.defineMIME('js', 'javascript');
-    CodeMirror.defineMIME('py', 'python');
-    CodeMirror.defineMIME('sh', 'shell');
-    CodeMirror.defineMIME('bash', 'shell');
-    CodeMirror.defineMIME('shell', 'shell');
-    CodeMirror.defineMIME('yaml', 'yaml');
-    CodeMirror.defineMIME('yml', 'yaml');
-    CodeMirror.defineMIME('css', 'css');
-    CodeMirror.defineMIME('xml', 'xml');
-    CodeMirror.defineMIME('html', 'htmlmixed');
-    CodeMirror.defineMIME('sql', 'sql');
-    CodeMirror.defineMIME('lua', 'lua');
-    cm = CodeMirror.fromTextArea(ta, {
-      mode: { name: 'markdown', highlightFormatting: true, fencedCodeBlockHighlighting: true },
-      theme: 'material-darker',
-      lineNumbers: false,
-      lineWrapping: true,
-      indentUnit: 2,
-      tabSize: 2,
-      viewportMargin: Infinity,
-      matchBrackets: true,
-      extraKeys: {
-        Tab: handleTab,
-        'Shift-Tab': handleShiftTab,
-        'Ctrl-Enter': c => toggleTaskOnLine(c, state.currentFile, onEditorInput),
-        Enter: c => smartEnter(c, { formatTable, onEditorInput }),
+  const host = document.getElementById('editorHost');
+  if (host) {
+    const bindings = [
+      { key: 'Tab', run: () => handleTab(cm) || true },
+      { key: 'Shift-Tab', run: () => (handleShiftTab(cm) === PASS ? undefined : true) },
+      {
+        key: 'Ctrl-Enter',
+        run: () => {
+          toggleTaskOnLine(cm, state.currentFile, onEditorInput);
+          return true;
+        },
       },
+      {
+        key: 'Enter',
+        run: () => (smartEnter(cm, { formatTable, onEditorInput }) === PASS ? undefined : true),
+      },
+    ];
+    const rootStyle = getComputedStyle(document.documentElement);
+    cm = createEditor({
+      parent: host,
+      initialValue: '',
+      onChange: onEditorInput,
+      themeName: rootStyle.getPropertyValue('--bg').trim() === '#ffffff' ? 'latte' : 'frappe',
+      keymapBindings: bindings,
     });
-    cm.on('change', onEditorInput);
+    ta.style.display = 'none';
   } else {
     ta.addEventListener('input', onEditorInput);
   }
 
-  // Refresh CodeMirror when editor shown (fixes layout)
+  // Refresh editor when shown (fixes layout)
   const observer = new MutationObserver(() => {
     if (cm) setTimeout(() => cm.refresh(), 50);
   });
@@ -735,38 +726,33 @@ function updatePreview(resetScroll = true) {
 }
 
 function sanitizeHtml(html) {
-  if (typeof DOMPurify === 'undefined') throw new Error('DOMPurify not loaded');
   return DOMPurify.sanitize(html);
 }
 
 function renderMarkdown(text) {
-  if (!window.marked) return escHtml(text);
   taskIdx = 0;
   return sanitizeHtml(marked.parse(text, { breaks: true, gfm: true }));
 }
 
-if (window.marked) {
-  marked.use({
-    renderer: {
-      code({ text, lang }) {
-        const highlighted = highlightCode(text, lang || '', window.hljs);
-        return `<pre><code class="language-${escAttr(lang || 'plaintext')}">${highlighted}</code></pre>`;
-      },
-      listitem({ text, task, checked }) {
-        if (task) {
-          const idx = taskIdx++;
-          return `<li style="list-style:none;"><input type="checkbox" ${checked ? 'checked' : ''} data-task-idx="${idx}"> ${text}</li>`;
-        }
-        return `<li>${text}</li>`;
-      },
+marked.use({
+  renderer: {
+    code({ text, lang }) {
+      const highlighted = highlightCode(text, lang || '', hljs);
+      return `<pre><code class="language-${escAttr(lang || 'plaintext')}">${highlighted}</code></pre>`;
     },
-  });
-}
+    listitem({ text, task, checked }) {
+      if (task) {
+        const idx = taskIdx++;
+        return `<li style="list-style:none;"><input type="checkbox" ${checked ? 'checked' : ''} data-task-idx="${idx}"> ${text}</li>`;
+      }
+      return `<li>${text}</li>`;
+    },
+  },
+});
 
 // ============= SEARCH =============
 let searchMatches = [];
 let searchIndex = -1;
-let searchMarks = [];
 let searchCurrentMark = null;
 let searchInPreviewMode = false;
 let searchDebounce = null;
@@ -838,7 +824,7 @@ function searchInEditor(query) {
     const from = cm.posFromIndex(m.from);
     const to = cm.posFromIndex(m.to);
     searchMatches.push({ from, to });
-    searchMarks.push(cm.markText(from, to, { className: 'search-match' }));
+    cm.markText(from, to, { className: 'search-match' });
   }
   if (searchMatches.length) {
     searchIndex = 0;
@@ -935,7 +921,6 @@ function clearSearch() {
     cm.setCursor(cm.getCursor());
     cm.getAllMarks().forEach(m => m.clear());
   }
-  searchMarks = [];
   searchMatches = [];
   searchIndex = -1;
   searchInPreviewMode = false;
@@ -1113,7 +1098,7 @@ function toggleTheme() {
     root.style.setProperty('--text', '#e6edf3');
     root.style.setProperty('--text-muted', '#8b949e');
     document.getElementById('themeBtn').textContent = '🌙';
-    if (cm) cm.setOption('theme', 'material-darker');
+    if (cm) cm.setOption('theme', 'frappe');
   } else {
     root.style.setProperty('--bg', '#ffffff');
     root.style.setProperty('--surface', '#f6f8fa');
@@ -1122,7 +1107,7 @@ function toggleTheme() {
     root.style.setProperty('--text', '#1f2328');
     root.style.setProperty('--text-muted', '#656d76');
     document.getElementById('themeBtn').textContent = '☀️';
-    if (cm) cm.setOption('theme', 'material');
+    if (cm) cm.setOption('theme', 'latte');
   }
 }
 
@@ -1229,23 +1214,6 @@ async function init() {
   }
 }
 init();
-
-// Service worker registration
-if ('serviceWorker' in navigator) {
-  import('./lib/update.js').then(({ onUpdateAvailable, applyUpdate: applyUpdateFn }) => {
-    navigator.serviceWorker
-      .register('sw.js')
-      .then(reg => {
-        onUpdateAvailable(reg, () => {
-          applyUpdateFn(reg);
-        });
-      })
-      .catch(() => {});
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      window.location.reload();
-    });
-  });
-}
 
 // Bind events (replaces inline onclick/oninput/onkeydown/onchange handlers)
 function bindEvents() {
