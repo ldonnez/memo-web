@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/ldonnez/memo-web/compare/v0.3.0...v0.3.1) (2026-09-02)
+
+
+### Bug Fixes
+
+* ensure correct basePath ([a0e66f4](https://github.com/ldonnez/memo-web/commit/a0e66f4e6cbfe270563faed9cf78939c55a6ef5c))
+
 ## [0.3.0](https://github.com/ldonnez/memo-web/compare/v0.2.2...v0.3.0) (2026-09-02)
 
 
