@@ -2,6 +2,9 @@ import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  // Deployed as a GitHub Pages project page at /memo-web/, not the site root,
+  // so all emitted asset/SW URLs must carry the /memo-web/ base prefix.
+  base: '/memo-web/',
   server: {
     port: 8080,
   },
