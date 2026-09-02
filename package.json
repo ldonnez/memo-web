@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node scripts/dev-server.js",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "test": "node --test 'specs/**/*.spec.js'",
     "format": "prettier --write '**/*.{js,html,css,md,json}'",
     "format:check": "prettier --check '**/*.{js,html,css,md,json}'",
@@ -15,7 +17,28 @@
     "@commitlint/config-conventional": "^21.2.2",
     "eslint": "^10.9.1",
     "globals": "^17.11.0",
-    "openpgp": "^6.3.1",
-    "prettier": "^3.9.6"
+    "prettier": "^3.9.6",
+    "vite": "^8.2.2",
+    "vite-plugin-pwa": "^1.3.0"
+  },
+  "dependencies": {
+    "@catppuccin/codemirror": "^1.0.3",
+    "@codemirror/commands": "^6.11.0",
+    "@codemirror/lang-css": "^6.3.1",
+    "@codemirror/lang-html": "^6.4.12",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/lang-sql": "^6.10.0",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.2",
+    "@codemirror/view": "^6.43.10",
+    "@fig/lezer-bash": "^1.2.5",
+    "@lezer/highlight": "^1.2.3",
+    "dompurify": "^3.4.14",
+    "highlight.js": "^11.12.0",
+    "marked": "^18.0.11",
+    "openpgp": "^6.3.1"
   }
 }
