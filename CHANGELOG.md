@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0](https://github.com/ldonnez/memo-web/compare/v0.3.1...v0.4.0) (2026-09-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* typescript 7 with oxlint
+
+### Code Refactoring
+
+* typescript 7 with oxlint ([811ae69](https://github.com/ldonnez/memo-web/commit/811ae69be3105d592c4d0c6df22f4523d844e675))
+
 ## [0.3.1](https://github.com/ldonnez/memo-web/compare/v0.3.0...v0.3.1) (2026-09-02)
 
 
