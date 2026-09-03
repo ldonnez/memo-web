@@ -60,11 +60,13 @@ jobs:
             ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
             ${{ runner.os }}-node-modules-
 
-      - name: npm install, format check and lint
+      - name: npm install, format check, lint and typecheck
         run: |
           npm install
           npm run format:check
           npm run lint
+          npm run typecheck
+          npm run typecheck:specs
 
   test:
     runs-on: ubuntu-latest

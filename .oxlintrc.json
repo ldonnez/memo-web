@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "promise", "typescript", "oxc"],
+  "env": {
+    "browser": true
+  },
+  "rules": {
+    "no-var": "error",
+    "prefer-const": "warn",
+    "no-undef": "error",
+    "no-unused-vars": ["warn", { "args": "none", "varsIgnorePattern": "^_" }],
+    "no-unused-expressions": "off"
+  },
+  "overrides": [
+    {
+      "files": ["specs/**/*.ts"],
+      "env": {
+        "node": true
+      }
+    },
+    {
+      "files": ["env.d.ts"],
+      "rules": {
+        "typescript/no-misused-new": "off"
+      }
+    }
+  ]
+}

@@ -40,7 +40,7 @@ install icon in the address bar.
 ```sh
 npm run dev      # Vite dev server (HMR) at http://localhost:8080
 npm test         # unit tests (crypto round-trip, util, UI helpers)
-npm run lint     # ESLint
+npm run lint     # oxlint
 npm run format   # Prettier
 ```
 
