@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/ldonnez/memo-web/compare/v0.4.0...v0.5.0) (2026-09-06)
+
+
+### Features
+
+* keep last opened note when closing app ([c9a2fc5](https://github.com/ldonnez/memo-web/commit/c9a2fc53d261e896a8ec87269245b51acce4b5fb))
+
+
+### Bug Fixes
+
+* correctly set note count notes and offline navigating ([eb7156d](https://github.com/ldonnez/memo-web/commit/eb7156d5f5e4d1217896c0dc5e3dfc21d64a9f51))
+
 ## [0.4.0](https://github.com/ldonnez/memo-web/compare/v0.3.1...v0.4.0) (2026-09-03)
 
 
