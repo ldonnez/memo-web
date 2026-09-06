@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/ldonnez/memo-web/compare/v0.5.0...v0.5.1) (2026-09-06)
+
+
+### Bug Fixes
+
+* note navigation in subdirectory ([c8f3e67](https://github.com/ldonnez/memo-web/commit/c8f3e67c78fc0d5b4cfbaa884338e6eb5ecbff3b))
+
 ## [0.5.0](https://github.com/ldonnez/memo-web/compare/v0.4.0...v0.5.0) (2026-09-06)
 
 
