@@ -276,6 +276,25 @@ export async function loadCachedNotes(path: string): Promise<CachedRecord | null
   }
 }
 
+export async function computeCachedTotals(): Promise<{ totalNotes: number; totalDirs: number }> {
+  try {
+    const keys = await listCachedNotePaths()
+    let totalNotes = 0
+    let totalDirs = 0
+    for (const key of keys) {
+      const record = await loadCachedNotes(key.replace(/^memoweb_cache:/, ''))
+      if (record) {
+        totalNotes += record.notes?.length || 0
+        totalDirs += record.dirs?.length || 0
+      }
+    }
+    return { totalNotes, totalDirs }
+  } catch (e) {
+    console.warn('Failed to compute cached totals:', e)
+    return { totalNotes: 0, totalDirs: 0 }
+  }
+}
+
 export function formatNoteItem(note: Note, activePath: string | undefined): string {
   const active = activePath === note.path
   const name = note.name.replace(/\.md\.gpg$/, '').replace(/\.gpg$/, '')
