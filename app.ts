@@ -30,6 +30,9 @@ import {
   pickBestCachedRecord,
   findMatchRanges,
   withTimeout,
+  saveLastNotePath,
+  getLastNotePath,
+  clearLastNotePath,
 } from './lib/util.ts'
 import {
   contentCache,
@@ -558,6 +561,7 @@ async function selectNote(path: string) {
   }
 
   setUrlParams({ path: note.path })
+  saveLastNotePath(note.path)
   state = { ...state, currentFile: note, isDirty: false }
   renderNoteList()
 
@@ -632,6 +636,7 @@ async function selectNote(path: string) {
 function closeEditor() {
   state = { ...state, currentFile: null, isDirty: false }
   clearUrlPath()
+  clearLastNotePath()
   byEl<HTMLElement>('placeholder').style.display = 'flex'
   byEl<HTMLElement>('editor').style.display = 'none'
   renderNoteList()
@@ -1254,7 +1259,7 @@ async function init() {
   restoreDrafts()
   if (state.config.ghToken && state.config.ghOwner && state.config.ghRepo) {
     await loadFromCache(state.config.ghPath || '')
-    const path = getUrlParam('path')
+    const path = getUrlParam('path') || getLastNotePath()
     if (path) openNoteByPath(path)
     connect(true).catch(e => console.error('Background connect failed:', e))
   }

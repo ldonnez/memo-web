@@ -49,6 +49,28 @@ export function clearUrlPath(): void {
   window.history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''))
 }
 
+const LAST_NOTE_KEY = 'memoweb_lastNote'
+
+export function saveLastNotePath(path: string): void {
+  try {
+    localStorage.setItem(LAST_NOTE_KEY, path)
+  } catch {}
+}
+
+export function getLastNotePath(): string {
+  try {
+    return localStorage.getItem(LAST_NOTE_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+export function clearLastNotePath(): void {
+  try {
+    localStorage.removeItem(LAST_NOTE_KEY)
+  } catch {}
+}
+
 export function escAttr(s: string): string {
   return s
     .replace(/&/g, '&amp;')
