@@ -82,6 +82,7 @@ export async function verifyRepo(config: Config): Promise<RepoData> {
         Accept: 'application/vnd.github+json',
         'User-Agent': 'MemoWeb',
       },
+      cache: 'no-store',
       signal: requestTimeout(config),
     })
     if (res.status === 404) {
@@ -109,7 +110,7 @@ export async function gh<T = unknown>(config: Config, method: string, path: stri
     Accept: 'application/vnd.github+json',
     'User-Agent': 'MemoWeb',
   }
-  const opts: RequestInit = { method, headers, signal: requestTimeout(config) }
+  const opts: RequestInit = { method, headers, cache: 'no-store', signal: requestTimeout(config) }
   if (body) {
     headers['Content-Type'] = 'application/json'
     opts.body = JSON.stringify(body)
@@ -225,9 +226,15 @@ export async function fetchAllNotesContent(config: Config, notes: Note[]): Promi
   return updated
 }
 
-export async function walkAllDirsAndPrefetch(config: Config, rootPath: string, fileExt: string): Promise<void> {
+export async function walkAllDirsAndPrefetch(
+  config: Config,
+  rootPath: string,
+  fileExt: string,
+): Promise<{ totalNotes: number; totalDirs: number }> {
   const dirs: string[] = [rootPath || '']
   const seen = new Set<string>()
+  let totalNotes = 0
+  let totalDirs = 0
 
   while (dirs.length) {
     const dir = dirs.shift()!
@@ -242,10 +249,13 @@ export async function walkAllDirsAndPrefetch(config: Config, rootPath: string, f
       for (const item of entries) {
         if (item.type === 'dir') {
           dirs.push(item.path)
+          totalDirs++
         } else if (item.type === 'file' && item.name.endsWith(fileExt)) {
           files.push(item as GhFileEntry & { type: 'file' })
         }
       }
+
+      totalNotes += files.length
 
       const notes: Note[] = files.map(f => ({
         name: f.name,
@@ -269,4 +279,5 @@ export async function walkAllDirsAndPrefetch(config: Config, rootPath: string, f
       console.warn('walkAllDirsAndPrefetch error for', dir, e instanceof Error ? e.message : e)
     }
   }
+  return { totalNotes, totalDirs }
 }

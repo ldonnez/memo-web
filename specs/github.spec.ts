@@ -30,7 +30,14 @@ let ghPutFile: (
 ) => Promise<{ content: { sha: string } }>
 let ghDeleteFile: (config: Config, path: string, sha: string, message?: string) => Promise<unknown>
 let fetchAllNotesContent: (config: Config, notes: Note[]) => Promise<Note[]>
-let walkAllDirsAndPrefetch: (config: Config, rootPath: string, fileExt: string) => Promise<void>
+let walkAllDirsAndPrefetch: (
+  config: Config,
+  rootPath: string,
+  fileExt: string,
+) => Promise<{
+  totalNotes: number
+  totalDirs: number
+}>
 
 before(async () => {
   const mod = await import('../lib/github.ts')
@@ -149,10 +156,29 @@ function mockFetchTimeout() {
 
 describe('gh (raw API)', () => {
   it('sends GET request with auth headers and returns JSON', async () => {
-    mockFetch(200, { id: 1, name: 'test' })
+    let sentOpts: { headers?: Record<string, string>; cache?: string } | null = null as {
+      headers?: Record<string, string>
+      cache?: string
+    } | null
+    ;(globalThis as any).fetch = async (_url: unknown, opts: { headers?: Record<string, string>; cache?: string }) => {
+      sentOpts = opts
+      return { status: 200, ok: true, json: async () => ({ id: 1, name: 'test' }), text: async () => '{}' }
+    }
     const result = await gh(makeConfig(), 'GET', '/repos/o/r')
     assert.equal((result as Record<string, unknown>)['id'], 1)
     assert.equal((result as Record<string, unknown>)['name'], 'test')
+    assert.equal(sentOpts?.cache, 'no-store', 'GitHub API requests must bypass the browser HTTP cache')
+    assert.equal(sentOpts?.headers?.['Authorization'], 'Bearer test-token')
+  })
+
+  it('does not allow cached responses for other methods', async () => {
+    let sentOpts: { cache?: string } | null = null as { cache?: string } | null
+    ;(globalThis as any).fetch = async (_url: unknown, opts: { cache?: string }) => {
+      sentOpts = opts
+      return { status: 200, ok: true, json: async () => ({}), text: async () => '{}' }
+    }
+    await gh(makeConfig(), 'DELETE', '/repos/o/r/contents/p')
+    assert.equal(sentOpts?.cache, 'no-store')
   })
 
   it('sends POST with body as JSON', async () => {
@@ -199,6 +225,21 @@ describe('verifyRepo', () => {
     mockFetch(200, { full_name: 'o/r', default_branch: 'main' })
     const data = await verifyRepo(makeConfig())
     assert.equal(data.full_name, 'o/r')
+  })
+
+  it('bypasses the browser HTTP cache so offline loads cannot fake a connection', async () => {
+    let sentCache: string | null = null
+    ;(globalThis as any).fetch = async (_url: unknown, opts: { cache?: string }) => {
+      sentCache = opts?.cache ?? null
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({ full_name: 'o/r', default_branch: 'main' }),
+        text: async () => '{}',
+      }
+    }
+    await verifyRepo(makeConfig())
+    assert.equal(sentCache, 'no-store')
   })
 
   it('throws when repo is 404', async () => {
@@ -382,6 +423,21 @@ describe('walkAllDirsAndPrefetch', () => {
     draftCache.clear()
   })
 
+  function mockContentEndpoint(listings: Record<string, Array<Record<string, unknown>>>) {
+    const orig = globalThis.fetch
+    ;(globalThis as any).fetch = async (url: string) => {
+      const pathPart = decodeURIComponent(url.split('/contents/')[1]?.split('?ref=')[0] || '')
+      const listing = listings[pathPart]
+      if (listing) {
+        return { status: 200, ok: true, json: async () => listing, text: async () => JSON.stringify(listing) }
+      }
+      const fileName = pathPart.split('/').pop() || ''
+      const data = { name: fileName, content: `${fileName}-content`, sha: 'c-sha' }
+      return { status: 200, ok: true, json: async () => data, text: async () => JSON.stringify(data) }
+    }
+    return orig
+  }
+
   it('walks a single directory and caches notes', async () => {
     let requestIndex = 0
     const responses: unknown[] = [
@@ -396,8 +452,55 @@ describe('walkAllDirsAndPrefetch', () => {
       }
       return { status: 200, ok: true, json: async () => resp, text: async () => JSON.stringify(resp) }
     }
-    await walkAllDirsAndPrefetch(makeConfig(), 'notes', '.md.gpg')
+    const totals = await walkAllDirsAndPrefetch(makeConfig(), 'notes', '.md.gpg')
     assert.equal(contentCache.get('notes/a.md.gpg'), 'a-content')
+    assert.deepEqual(totals, { totalNotes: 1, totalDirs: 0 })
+    globalThis.fetch = orig
+  })
+
+  it('counts notes and subdirectories across the whole tree', async () => {
+    const orig = mockContentEndpoint({
+      '': [
+        { type: 'dir', name: 'sub', path: 'sub', sha: 'd1' },
+        { type: 'dir', name: 'empty', path: 'empty', sha: 'd2' },
+        { type: 'file', name: 'root.md.gpg', path: 'root.md.gpg', sha: 's1', size: 2 },
+      ],
+      sub: [
+        { type: 'file', name: 'a.md.gpg', path: 'sub/a.md.gpg', sha: 's2', size: 2 },
+        { type: 'file', name: 'b.md.gpg', path: 'sub/b.md.gpg', sha: 's3', size: 2 },
+      ],
+      empty: [],
+    })
+    const totals = await walkAllDirsAndPrefetch(makeConfig(), '', '.md.gpg')
+    assert.deepEqual(totals, { totalNotes: 3, totalDirs: 2 })
+    assert.equal(contentCache.get('root.md.gpg'), 'root.md.gpg-content')
+    assert.equal(contentCache.get('sub/a.md.gpg'), 'a.md.gpg-content')
+    assert.equal(contentCache.get('sub/b.md.gpg'), 'b.md.gpg-content')
+    globalThis.fetch = orig
+  })
+
+  it('counts from a non-root starting directory', async () => {
+    const orig = mockContentEndpoint({
+      sub: [
+        { type: 'file', name: 'a.md.gpg', path: 'sub/a.md.gpg', sha: 's1', size: 2 },
+        { type: 'file', name: 'b.md.gpg', path: 'sub/b.md.gpg', sha: 's2', size: 2 },
+      ],
+    })
+    const totals = await walkAllDirsAndPrefetch(makeConfig(), 'sub', '.md.gpg')
+    assert.deepEqual(totals, { totalNotes: 2, totalDirs: 0 })
+    globalThis.fetch = orig
+  })
+
+  it('ignores files that do not match the extension when counting', async () => {
+    const orig = mockContentEndpoint({
+      '': [
+        { type: 'file', name: 'real.md.gpg', path: 'real.md.gpg', sha: 's1', size: 2 },
+        { type: 'file', name: 'readme.md', path: 'readme.md', sha: 's2', size: 2 },
+        { type: 'file', name: 'data.json', path: 'data.json', sha: 's3', size: 2 },
+      ],
+    })
+    const totals = await walkAllDirsAndPrefetch(makeConfig(), '', '.md.gpg')
+    assert.deepEqual(totals, { totalNotes: 1, totalDirs: 0 })
     globalThis.fetch = orig
   })
 
@@ -407,12 +510,41 @@ describe('walkAllDirsAndPrefetch', () => {
       throw new Error('network error')
     }
     let err: unknown
+    let totals: { totalNotes: number; totalDirs: number } | null = null
     try {
-      await walkAllDirsAndPrefetch(makeConfig(), 'bad-dir', '.md.gpg')
+      totals = await walkAllDirsAndPrefetch(makeConfig(), 'bad-dir', '.md.gpg')
     } catch (e) {
       err = e
     }
     assert.equal(err, undefined)
+    assert.deepEqual(totals, { totalNotes: 0, totalDirs: 0 })
+    globalThis.fetch = orig
+  })
+
+  it('continues counting other directories when one listing fails', async () => {
+    const orig = globalThis.fetch
+    const listings: Record<string, Array<Record<string, unknown>>> = {
+      '': [
+        { type: 'dir', name: 'bad', path: 'bad', sha: 'd1' },
+        { type: 'dir', name: 'ok', path: 'ok', sha: 'd2' },
+        { type: 'file', name: 'root.md.gpg', path: 'root.md.gpg', sha: 's1', size: 2 },
+      ],
+      ok: [{ type: 'file', name: 'nested.md.gpg', path: 'ok/nested.md.gpg', sha: 's2', size: 2 }],
+    }
+    ;(globalThis as any).fetch = async (url: string) => {
+      const pathPart = decodeURIComponent(url.split('/contents/')[1]?.split('?ref=')[0] || '')
+      if (pathPart === 'bad') throw new Error('network error')
+      const listing = listings[pathPart]
+      if (listing) {
+        return { status: 200, ok: true, json: async () => listing, text: async () => JSON.stringify(listing) }
+      }
+      const fileName = pathPart.split('/').pop() || ''
+      const data = { name: fileName, content: `${fileName}-content`, sha: 'c-sha' }
+      return { status: 200, ok: true, json: async () => data, text: async () => JSON.stringify(data) }
+    }
+    const totals = await walkAllDirsAndPrefetch(makeConfig(), '', '.md.gpg')
+    assert.deepEqual(totals, { totalNotes: 2, totalDirs: 2 })
+    assert.equal(contentCache.get('ok/nested.md.gpg'), 'nested.md.gpg-content')
     globalThis.fetch = orig
   })
 })

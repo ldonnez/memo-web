@@ -26,6 +26,7 @@ import {
   revertNote,
   cacheNotesToLocalStorage,
   loadCachedNotes,
+  computeCachedTotals,
   listCachedNotePaths,
   pickBestCachedRecord,
   findMatchRanges,
@@ -74,6 +75,8 @@ interface AppState {
   isDirty: boolean
   showPreview: boolean
   connected: boolean
+  totalNotes: number
+  totalDirs: number
 }
 
 // ============= STATE =============
@@ -112,14 +115,17 @@ async function loadFromCache(path: string, extraState: Partial<AppState> = {}) {
   for (const n of notes) {
     if (n.content) contentCache.set(n.path, n.content)
   }
+  const totals = await computeCachedTotals()
   state = {
     ...state,
     notes,
     dirs: cached.dirs || [],
     currentBrowsePath: cached.currentBrowsePath || '',
+    totalNotes: totals.totalNotes || state.totalNotes,
+    totalDirs: totals.totalDirs || state.totalDirs,
     ...extraState,
   }
-  setConnectionStatus(`Offline · ${buildStatusText(state.notes.length, state.dirs.length)}`, false)
+  setConnectionStatus(`Offline · ${buildStatusText(state.totalNotes, state.totalDirs)}`, false)
   renderNoteList()
   return true
 }
@@ -147,6 +153,8 @@ let state: AppState = {
   isDirty: false,
   showPreview: false,
   connected: false,
+  totalNotes: 0,
+  totalDirs: 0,
 }
 
 // ============= CONFIG =============
@@ -251,12 +259,14 @@ async function connect(background = false) {
     renderNoteList()
   }
 
+  const startPath = state.currentBrowsePath
   const controller = new AbortController()
   try {
     await withTimeout(doConnect(c, controller.signal), CONNECT_TIMEOUT_MS, () => controller.abort())
   } catch (e) {
     controller.abort()
     console.error('Connection error:', e)
+    if (state.currentBrowsePath !== startPath) return
     const fallbackPath = c.ghPath || state.currentBrowsePath
     if (!(await loadFromCache(fallbackPath))) {
       setConnectionStatus(`Error: ${errMsg(e)}`, false)
@@ -268,7 +278,7 @@ async function connect(background = false) {
 async function doConnect(c: Config, signal: AbortSignal) {
   const path = c.ghPath || ''
   const ext = c.fileExt || '.md.gpg'
-  const token = state.currentBrowsePath
+  const startPath = state.currentBrowsePath
   console.log('Connecting to', `${c.ghOwner}/${c.ghRepo}`, 'path:', path, 'branch:', c.ghBranch)
 
   // Verify repo exists and is accessible
@@ -287,7 +297,7 @@ async function doConnect(c: Config, signal: AbortSignal) {
 
   const entries = path ? await ghListDir(state.config, path) : await ghListDir(state.config, '')
   if (signal.aborted) return
-  if (state.currentBrowsePath !== token) return
+  if (state.currentBrowsePath !== startPath) return
 
   if (!Array.isArray(entries)) {
     console.warn('Unexpected response from GitHub API, expected array, got:', entries)
@@ -298,17 +308,23 @@ async function doConnect(c: Config, signal: AbortSignal) {
   }
 
   const { dirs, notes } = parseEntries(entries, ext)
-  state = { ...state, dirs, notes, currentBrowsePath: path }
+  state = { ...state, dirs, notes, currentBrowsePath: path, totalNotes: notes.length, totalDirs: dirs.length }
   pruneContentCache(notes, path)
   state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) }
   if (signal.aborted) return
-  if (state.currentBrowsePath !== token) return
+  if (state.currentBrowsePath !== path) return
 
-  setConnectionStatus(`Connected · ${buildStatusText(state.notes.length, state.dirs.length)}`, true)
+  setConnectionStatus(`Connected · ${buildStatusText(state.totalNotes, state.totalDirs)}`, true)
   renderNoteList()
   await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
   setTimeout(
-    () => walkAllDirsAndPrefetch(state.config, path, ext).catch(e => console.warn('background sync:', e.message)),
+    () =>
+      walkAllDirsAndPrefetch(state.config, path, ext)
+        .then(({ totalNotes, totalDirs }) => {
+          state = { ...state, totalNotes, totalDirs }
+          setConnectionStatus(`Connected · ${buildStatusText(totalNotes, totalDirs)}`, true)
+        })
+        .catch(e => console.warn('background sync:', e.message)),
     0,
   )
   byEl<HTMLButtonElement>('newNoteBtn').disabled = false
@@ -385,12 +401,18 @@ async function pullChanges() {
     state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) }
     if (state.currentBrowsePath + '|' + (state.currentFile?.path || '') !== token) return
 
-    setConnectionStatus(`Synced · ${buildStatusText(state.notes.length, state.dirs.length)}`, true)
+    setConnectionStatus(`Synced · ${buildStatusText(state.totalNotes, state.totalDirs)}`, true)
     renderNoteList()
     await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
     const basePath = c.ghPath || ''
     setTimeout(
-      () => walkAllDirsAndPrefetch(state.config, basePath, ext).catch(e => console.warn('background sync:', e.message)),
+      () =>
+        walkAllDirsAndPrefetch(state.config, basePath, ext)
+          .then(({ totalNotes, totalDirs }) => {
+            state = { ...state, totalNotes, totalDirs }
+            setConnectionStatus(`Connected · ${buildStatusText(totalNotes, totalDirs)}`, true)
+          })
+          .catch(e => console.warn('background sync:', e.message)),
       0,
     )
     toast('Synced with remote', 'info')
@@ -516,11 +538,11 @@ async function navigateToDir(dirPath: string) {
 
   setConnectionStatus('Loading...', state.connected)
   const c = state.config
-  const token = state.currentBrowsePath
+  const startPath = state.currentBrowsePath
 
   try {
     const entries = await ghListDir(state.config, dirPath || '')
-    if (state.currentBrowsePath !== token) return
+    if (state.currentBrowsePath !== startPath) return
     if (!Array.isArray(entries)) {
       setConnectionStatus('Connected', true)
       return
@@ -533,13 +555,13 @@ async function navigateToDir(dirPath: string) {
     pruneContentCache(notes, dirPath)
 
     state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) }
-    if (state.currentBrowsePath !== token) return
+    if (state.currentBrowsePath !== dirPath) return
 
-    setConnectionStatus(`Connected · ${buildStatusText(state.notes.length, state.dirs.length)}`, true)
+    setConnectionStatus(`Connected · ${buildStatusText(state.totalNotes, state.totalDirs)}`, true)
     renderNoteList()
     await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
   } catch (e) {
-    if (state.currentBrowsePath !== token) return
+    if (state.currentBrowsePath !== startPath) return
     console.error('Directory navigation error:', e)
     state = { ...state, currentFile: null, isDirty: false }
     closeEditor()
@@ -1260,7 +1282,7 @@ async function init() {
   if (state.config.ghToken && state.config.ghOwner && state.config.ghRepo) {
     await loadFromCache(state.config.ghPath || '')
     const path = getUrlParam('path') || getLastNotePath()
-    if (path) openNoteByPath(path)
+    if (path) await openNoteByPath(path)
     connect(true).catch(e => console.error('Background connect failed:', e))
   }
 }

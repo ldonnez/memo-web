@@ -1,11 +1,6 @@
 import { describe, it, before, beforeEach, after } from 'node:test'
 import { strict as assert } from 'node:assert'
-import {
-  saveLastNotePath,
-  getLastNotePath,
-  clearLastNotePath,
-  getUrlParam,
-} from '../lib/util.ts'
+import { saveLastNotePath, getLastNotePath, clearLastNotePath, getUrlParam } from '../lib/util.ts'
 
 describe('last note persistence (saveLastNotePath / getLastNotePath / clearLastNotePath)', () => {
   let ls: Record<string, string>
@@ -158,7 +153,7 @@ describe('last note helpers — robustness', () => {
   let ls: Record<string, string>
 
   before(() => {
-    ls = { 'memoweb_lastNote': 'a-path' }
+    ls = { memoweb_lastNote: 'a-path' }
     globalThis.localStorage = {
       getItem: (k: string) => ls[k] ?? null,
       setItem: (k: string, v: string) => {
