@@ -13,9 +13,16 @@ import type { Note, Dir } from '../lib/types.ts'
 //             so a background reconnect cannot overwrite an already-restored
 //             subdir navigation.
 //
+// Added later (the success-path bug):
+//   doConnect(): bail when an open note's dir differs from the connect target
+//             (ghPath), so a background reconnect cannot reset the browse path
+//             to root and close the just-restored subdir note.
+//   connect() catch: additionally bail when a restored note is open and the
+//             fallback (c.ghPath) would move away from its dir.
+//
 // These functions are pure state transitions (no DOM / IDB / fetch), mirroring
-// loadFromCache / navigateToDir / connect (app.ts) and listCachedNotePaths /
-// pickBestCachedRecord (lib/util.ts).
+// loadFromCache / navigateToDir / connect / doConnect (app.ts) and
+// listCachedNotePaths / pickBestCachedRecord (lib/util.ts).
 // =====================================================================
 
 interface RecordData {
@@ -120,6 +127,7 @@ function runConnectCatch(
   records: Record<string, RecordData>,
   ghPath: string,
   withGuard: boolean,
+  preserveNote = true,
 ): SnapState {
   // Mirrors app.ts connect() catch after doConnect throws (offline).
   if (withGuard && stateBefore.currentBrowsePath !== startPath) {
@@ -127,7 +135,39 @@ function runConnectCatch(
   }
   // Mirrors app.ts: const fallbackPath = c.ghPath || state.currentBrowsePath
   const fallbackPath = ghPath || stateBefore.currentBrowsePath
+  // Mirrors app.ts: if (state.currentFile && fallbackPath !== state.currentBrowsePath) return
+  if (preserveNote && stateBefore.currentFile && fallbackPath !== stateBefore.currentBrowsePath) {
+    return stateBefore
+  }
   return loadFromCache(stateBefore, records, fallbackPath)
+}
+
+/** Mirrors app.ts doConnect success: stale-path + open-note guards, then the root listing clobber. */
+function runConnectSuccess(
+  stateBefore: SnapState,
+  startPath: string,
+  path: string,
+  records: Record<string, RecordData>,
+  withGuard: boolean,
+): SnapState {
+  // Mirrors app.ts doConnect: if (state.currentBrowsePath !== startPath) return
+  if (stateBefore.currentBrowsePath !== startPath) return stateBefore
+  // Mirrors the new success-path guard: never navigate away from an open note.
+  if (withGuard && stateBefore.currentFile && stateBefore.currentBrowsePath !== path) return stateBefore
+  // Mirrors app.ts line 311: state = { ...state, dirs, notes, currentBrowsePath: path }
+  const rec = records[path || '(root)']
+  if (!rec) return stateBefore
+  let next: SnapState = {
+    notes: rec.notes,
+    dirs: rec.dirs,
+    currentBrowsePath: rec.currentBrowsePath,
+    currentFile: stateBefore.currentFile,
+  }
+  // Mirrors doConnect's trailing closeEditor(): the open note vanished from the new listing.
+  if (next.currentFile && !next.notes.find(n => n.path === next.currentFile)) {
+    next = { ...next, currentFile: null }
+  }
+  return next
 }
 
 describe('offline reopen — connect catch does not clobber a restored subdir', () => {
@@ -164,6 +204,7 @@ describe('offline reopen — connect catch does not clobber a restored subdir', 
       { '(root)': ROOT, docs: DOCS },
       /*ghPath*/ 'docs',
       /*withGuard*/ false,
+      /*preserveNote*/ false,
     )
     assert.equal(after.currentBrowsePath, 'docs', 'bug: current dir reset to the configured root path')
     assert.equal(after.notes.length, 1, 'bug: now listing the ghPath dir instead of the subdir')
@@ -265,6 +306,143 @@ describe('offline reopen — connect catch does not clobber a restored subdir', 
     const after = await openNoteByPath(state, { '(root)': ROOT }, 'missing/note.md.gpg')
     assert.equal(after.currentBrowsePath, '', 'browse path unchanged (cache miss)')
     assert.equal(after.currentFile, null, 'no file selected')
+  })
+
+  it('catch: ghPath fallback cannot clobber when startPath === currentBrowsePath (restored note open)', async () => {
+    // Real initiated flow: connect captures startPath AFTER openNoteByPath, so it is
+    // already 'sub'. The stale-path guard no-ops — only the open-note guard saves us
+    // from the configured ghPath fallback overwriting the restored subdir.
+    let state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
+    state = loadFromCache(state, { '(root)': ROOT }, '(root)')
+    state = await openNoteByPath(state, { '(root)': ROOT, sub: SUBDIR }, 'sub/note.md.gpg')
+    assert.equal(state.currentBrowsePath, 'sub')
+    assert.equal(state.currentFile, 'sub/note.md.gpg')
+
+    // ghPath = 'docs', fallbackPath = 'docs', which differs from the subdir the
+    // note is open in.
+    const after = runConnectCatch(
+      state,
+      /*startPath*/ 'sub',
+      { '(root)': ROOT, docs: DOCS },
+      /*ghPath*/ 'docs',
+      /*withGuard*/ true,
+    )
+    assert.equal(after.currentBrowsePath, 'sub', 'open-note guard keeps the subdir')
+    assert.equal(after.currentFile, 'sub/note.md.gpg', 'note selection preserved')
+  })
+
+  it('catch: regression — without the open-note guard, ghPath fallback clobbers even with startPath === currentBrowsePath', async () => {
+    let state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
+    state = loadFromCache(state, { '(root)': ROOT }, '(root)')
+    state = await openNoteByPath(state, { '(root)': ROOT, sub: SUBDIR }, 'sub/note.md.gpg')
+
+    const after = runConnectCatch(
+      state,
+      /*startPath*/ 'sub',
+      { '(root)': ROOT, docs: DOCS },
+      /*ghPath*/ 'docs',
+      /*withGuard*/ true,
+      /*preserveNote*/ false,
+    )
+    assert.equal(after.currentBrowsePath, 'docs', 'bug: sidebar jumped to the configured root')
+  })
+})
+
+// =====================================================================
+// The OTHER clobber: doConnect SUCCESS unconditionally reset currentBrowsePath
+// to the configured root (line 311) and then closed the editor when the open
+// subdir note was absent from the root listing (lines 332-338). This is what
+// made the restored note close and the app land on the main menu ~2s after open.
+// =====================================================================
+
+describe('offline reopen — doConnect success does not close a restored subdir note', () => {
+  async function restoreSubdir(): Promise<SnapState> {
+    let state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
+    state = loadFromCache(state, { '(root)': ROOT }, '(root)')
+    return await openNoteByPath(state, { '(root)': ROOT, sub: SUBDIR }, 'sub/note.md.gpg')
+  }
+
+  it('regression: without the guard, success navigates to root and closes the note', async () => {
+    const state = await restoreSubdir()
+    assert.equal(state.currentBrowsePath, 'sub')
+    assert.equal(state.currentFile, 'sub/note.md.gpg')
+
+    // OLD behavior: doConnect sets currentBrowsePath = '' (target) and the open
+    // subdir note is not in the root listing → closeEditor() → note gone, main menu.
+    const after = runConnectSuccess(
+      state,
+      /*startPath*/ 'sub',
+      /*path*/ '',
+      { '(root)': ROOT, sub: SUBDIR },
+      /*withGuard*/ false,
+    )
+    assert.equal(after.currentBrowsePath, '', 'bug: sidebar reset to root')
+    assert.equal(after.currentFile, null, 'bug: editor closed because the note left the listing')
+  })
+
+  it('guard keeps the restored subdir + open note when connect targets the root', async () => {
+    const state = await restoreSubdir()
+    const after = runConnectSuccess(
+      state,
+      /*startPath*/ 'sub',
+      /*path*/ '',
+      { '(root)': ROOT, sub: SUBDIR },
+      /*withGuard*/ true,
+    )
+    assert.equal(after.currentBrowsePath, 'sub', 'no navigation away from the open note')
+    assert.equal(after.currentFile, 'sub/note.md.gpg', 'note stays open')
+  })
+
+  it('guard is a no-op when the note is open in the connect target dir (refresh proceeds)', async () => {
+    let state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
+    state = loadFromCache(state, { '(root)': ROOT }, '(root)')
+    state = selectNote(state, 'root.md.gpg')
+
+    // connect target '' === currentBrowsePath '' → guard no-ops → refresh runs.
+    const after = runConnectSuccess(
+      state,
+      /*startPath*/ '',
+      /*path*/ '',
+      { '(root)': ROOT, sub: SUBDIR },
+      /*withGuard*/ true,
+    )
+    assert.equal(after.currentBrowsePath, '', 'refresh proceeds')
+    assert.equal(after.currentFile, 'root.md.gpg', 'note still present in the refreshed root list')
+  })
+
+  it('guard is a no-op when no note is open (clean browsing navigate-to-root works)', async () => {
+    let state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
+    state = loadFromCache(state, { '(root)': ROOT }, '(root)')
+    state = await navigateToDir(state, { '(root)': ROOT, sub: SUBDIR }, 'sub')
+
+    // No currentFile → the guard bails only on open notes → connect navigates to root.
+    const after = runConnectSuccess(
+      state,
+      /*startPath*/ 'sub',
+      /*path*/ '',
+      { '(root)': ROOT, sub: SUBDIR },
+      /*withGuard*/ true,
+    )
+    assert.equal(after.currentBrowsePath, '', 'navigated to the configured root as before')
+    assert.equal(after.currentFile, null, 'no selection made')
+  })
+
+  it('open note missing from the refreshed listing still closes (deleted-remotely behavior kept)', async () => {
+    // Note open in the target dir, but the fresh listing no longer contains it.
+    let state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
+    state = loadFromCache(state, { '(root)': ROOT }, '(root)')
+    state = selectNote(state, 'root.md.gpg')
+
+    // The refreshed root listing dropped root.md.gpg (deleted on the remote).
+    const after = runConnectSuccess(
+      state,
+      /*startPath*/ '',
+      /*path*/ '',
+      { '(root)': snapshot('', ['other.md.gpg']) },
+      /*withGuard*/ true,
+    )
+    assert.equal(after.currentBrowsePath, '', 'refresh proceeds for the same dir')
+    assert.equal(after.currentFile, null, 'editor closes because the file was deleted remotely')
   })
 })
 

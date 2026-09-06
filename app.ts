@@ -268,6 +268,8 @@ async function connect(background = false) {
     console.error('Connection error:', e)
     if (state.currentBrowsePath !== startPath) return
     const fallbackPath = c.ghPath || state.currentBrowsePath
+    // A restored subdir note must win over the configured root fallback.
+    if (state.currentFile && fallbackPath !== state.currentBrowsePath) return
     if (!(await loadFromCache(fallbackPath))) {
       setConnectionStatus(`Error: ${errMsg(e)}`, false)
       toast(errMsg(e), 'error')
@@ -298,6 +300,11 @@ async function doConnect(c: Config, signal: AbortSignal) {
   const entries = path ? await ghListDir(state.config, path) : await ghListDir(state.config, '')
   if (signal.aborted) return
   if (state.currentBrowsePath !== startPath) return
+
+  // A reconnect must never yank the user out of the directory holding an open
+  // note (e.g. a subdir restored by init's openNoteByPath). Bail instead of
+  // resetting currentBrowsePath / closing the editor on the configured root.
+  if (state.currentFile && state.currentBrowsePath !== path) return
 
   if (!Array.isArray(entries)) {
     console.warn('Unexpected response from GitHub API, expected array, got:', entries)
