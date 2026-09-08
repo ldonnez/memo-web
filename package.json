@@ -35,7 +35,7 @@
     "@codemirror/lang-python": "^6.2.1",
     "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/language": "^6.12.4",
-    "@codemirror/state": "^6.7.3",
+    "@codemirror/state": "^6.7.4",
     "@codemirror/view": "^6.43.11",
     "@fig/lezer-bash": "^1.2.5",
     "@lezer/highlight": "^1.2.3",
