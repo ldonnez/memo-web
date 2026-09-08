@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/ldonnez/memo-web/compare/v0.5.1...v0.6.0) (2026-09-08)
+
+
+### Features
+
+* show the warning button when newer remote version exists ([53ce7c4](https://github.com/ldonnez/memo-web/commit/53ce7c40c01153ba079228d484991292ddc50f57))
+
 ## [0.5.1](https://github.com/ldonnez/memo-web/compare/v0.5.0...v0.5.1) (2026-09-06)
 
 
