@@ -30,6 +30,7 @@ let ghPutFile: (
 ) => Promise<{ content: { sha: string } }>
 let ghDeleteFile: (config: Config, path: string, sha: string, message?: string) => Promise<unknown>
 let fetchAllNotesContent: (config: Config, notes: Note[]) => Promise<Note[]>
+let restoreDraftBaselines: (notes: Note[]) => Note[]
 let walkAllDirsAndPrefetch: (
   config: Config,
   rootPath: string,
@@ -50,6 +51,7 @@ before(async () => {
   ghPutFile = mod.ghPutFile
   ghDeleteFile = mod.ghDeleteFile
   fetchAllNotesContent = mod.fetchAllNotesContent
+  restoreDraftBaselines = mod.restoreDraftBaselines
   walkAllDirsAndPrefetch = mod.walkAllDirsAndPrefetch
 })
 
@@ -414,6 +416,82 @@ describe('fetchAllNotesContent', () => {
     const updated = await fetchAllNotesContent(makeConfig(), notes)
     assert.equal(updated[0]!.content, null)
     globalThis.fetch = orig
+  })
+
+  it('never advances the baseline of a note with an active draft (second-refresh regression)', async () => {
+    // First reload's connect must NOT pull fresher remote content into a drafted
+    // note: doing so re-keys the next reload's dirty-compare baseline to the
+    // remote content, so decideRemoteRefresh sees remote === baseline → 'skip' →
+    // clearRemotRefresh() → the ⚠️ warning vanishes on the second reload.
+    contentCache.set('notes/drafty.md.gpg', 'baseline-content')
+    draftCache.set('notes/drafty.md.gpg', 'my-draft')
+    let fetchCount = 0
+    const orig = globalThis.fetch
+    ;(globalThis as any).fetch = async () => {
+      fetchCount++
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({ name: 'x.md.gpg', content: 'newer-remote-content', sha: 'new-sha' }),
+        text: async () => '{}',
+      }
+    }
+    try {
+      const notes = [makeNote({ name: 'drafty.md.gpg', path: 'notes/drafty.md.gpg', content: null })]
+      const updated = await fetchAllNotesContent(makeConfig(), notes)
+      assert.equal(fetchCount, 0, 'drafted note is not prefetched')
+      assert.equal(updated[0]!.content, null, 'content stays untouched for the drafted note')
+      assert.equal(contentCache.get('notes/drafty.md.gpg'), 'baseline-content', 'contentCache baseline not advanced')
+    } finally {
+      draftCache.delete('notes/drafty.md.gpg')
+      contentCache.clear()
+      globalThis.fetch = orig
+    }
+  })
+})
+
+describe('restoreDraftBaselines', () => {
+  before(() => {
+    contentCache.clear()
+    draftCache.clear()
+  })
+
+  it('restores the cached baseline for a note with an active draft', () => {
+    contentCache.set('notes/drafty.md.gpg', 'baseline-content')
+    draftCache.set('notes/drafty.md.gpg', 'my-draft')
+    try {
+      const restored = restoreDraftBaselines([
+        makeNote({ name: 'drafty.md.gpg', path: 'notes/drafty.md.gpg', content: null }),
+        makeNote({ name: 'clean.md.gpg', path: 'notes/clean.md.gpg', content: 'fresh-remote' }),
+      ])
+      assert.equal(restored[0]!.content, 'baseline-content', 'drafted note baseline restored before caching')
+      assert.equal(restored[1]!.content, 'fresh-remote', 'non-drafted note untouched')
+    } finally {
+      draftCache.clear()
+      contentCache.clear()
+    }
+  })
+
+  it('leaves the note alone when no baseline is cached', () => {
+    draftCache.set('notes/drafty.md.gpg', 'my-draft')
+    try {
+      const restored = restoreDraftBaselines([
+        makeNote({ name: 'drafty.md.gpg', path: 'notes/drafty.md.gpg', content: null }),
+      ])
+      assert.equal(restored[0]!.content, null, 'no baseline → stays null (refresh still flags)')
+    } finally {
+      draftCache.clear()
+    }
+  })
+
+  it('is identity for notes without a draft', () => {
+    contentCache.set('notes/clean.md.gpg', 'some-content')
+    try {
+      const notes = [makeNote({ name: 'clean.md.gpg', path: 'notes/clean.md.gpg', content: 'remote' })]
+      assert.equal(restoreDraftBaselines(notes)[0]!.content, 'remote', 'keeps prefetched content')
+    } finally {
+      contentCache.clear()
+    }
   })
 })
 

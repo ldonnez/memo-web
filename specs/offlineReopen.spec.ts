@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test'
 import { strict as assert } from 'node:assert'
+import { decideRemoteRefresh } from '../lib/util.ts'
+import { draftCache } from '../lib/draft.ts'
 import type { Note, Dir } from '../lib/types.ts'
 
 // =====================================================================
@@ -36,6 +38,8 @@ interface SnapState {
   dirs: Dir[]
   currentBrowsePath: string
   currentFile: string | null
+  pendingRefresh?: string | null
+  persistedRefresh?: string | null
 }
 
 function makeNote(name: string, path: string): Note {
@@ -71,10 +75,10 @@ function loadFromCache(state: SnapState, records: Record<string, RecordData>, pa
   const rec = records[path || '(root)']
   if (!rec) return state
   return {
+    ...state, // warns + currentFile preserved, matching `state = { ...state, notes, dirs, ... }`
     notes: rec.notes,
     dirs: rec.dirs,
     currentBrowsePath: rec.currentBrowsePath,
-    currentFile: state.currentFile, // mirrored from `{ ...state }` in app.ts
   }
 }
 
@@ -536,5 +540,209 @@ describe('offline reopen — loadFromCache edge cases', () => {
     const after = loadFromCache(state, {}, '(root)')
     assert.equal(after.notes.length, 0, 'no notes in empty cache')
     assert.equal(after.currentBrowsePath, '', 'browse path unchanged')
+  })
+})
+
+// =====================================================================
+// Reopen of a subdir note must NOT prefetch the dir listing into the note's
+// `content`: that advances the note to the NEW remote b64 before the draft
+// restore, so refreshOpenNoteContent sees "remote unchanged" and skips the
+// dirty-flag → the ⚠️ Remote warning button never shows.
+// =====================================================================
+
+/** Mirrors app.ts navigateToDir(dir, { prefetch: false }) online: fresh content-less listing + merge of the previous cached record's content into notes. */
+function navigateToDirNoPrefetch(fresh: Note[], cachedDir: RecordData, dir: string): SnapState {
+  const prev = new Map(cachedDir.notes.map(n => [n.path, n]))
+  return {
+    notes: fresh.map(n => {
+      const p = prev.get(n.path)
+      return p && p.content ? { ...n, content: p.content, sha: p.sha ?? n.sha } : n
+    }),
+    dirs: [],
+    currentBrowsePath: dir,
+    currentFile: null,
+  }
+}
+
+describe('closeEditor must not clear the pending remote-refresh warning', () => {
+  // Mirrors app.ts closeEditor(): navigation-close resets the editor but must
+  // keep a restored "remote changed while dirty" warning (pendingRefresh) so the
+  // ⚠️ Remote button reappears when the note is reopened — it is only cleared on
+  // save/discard/apply/new/pull.
+  function closeEditor(state: SnapState): SnapState {
+    return { ...state, currentFile: null }
+  }
+
+  // Mirrors app.ts syncRemoteRefreshBtn(): the button shows for the open note
+  // when the warning comes from memory OR from the persisted payload.
+  function buttonShown(state: SnapState): boolean {
+    return (
+      !!state.currentFile &&
+      (state.pendingRefresh === state.currentFile || state.persistedRefresh === state.currentFile)
+    )
+  }
+
+  it('reopen flow: restored warning survives navigateToDir close and re-shows on selectNote', () => {
+    // init() order: restoreDrafts() + restorePendingRemoteRefresh() restore the
+    // flag BEFORE openNoteByPath, which navigates (closeEditor) and then selects.
+    let state = loadFromCache(
+      { notes: [], dirs: [], currentBrowsePath: '', currentFile: null, pendingRefresh: 'sub/note.md.gpg' },
+      { '(root)': ROOT },
+      '(root)',
+    )
+    state = closeEditor(state) // navigateToDir -> closeEditor (openNoteByPath, subdir case)
+    assert.equal(state.currentFile, null, 'editor closed')
+
+    // selectNote reopens the drafted note; currentFile now matches the warning.
+    state = selectNote(loadFromCache(state, { sub: SUBDIR }, 'sub'), 'sub/note.md.gpg')
+    assert.equal(state.currentFile, 'sub/note.md.gpg', 'note reopened')
+    assert.ok(buttonShown(state), 'warning matches reopened note (button visible)')
+  })
+
+  it('self-healing: the persisted payload alone re-shows the button even if memory was wiped', () => {
+    // Mirrors a reopen where pendingRemoteRefresh was cleared in memory but the
+    // localStorage payload survived: buttonShown derives from persistedRefresh too.
+    let state: SnapState = {
+      notes: [],
+      dirs: [],
+      currentBrowsePath: '',
+      currentFile: null,
+      pendingRefresh: null,
+      persistedRefresh: 'sub/note.md.gpg',
+    }
+    state = selectNote(loadFromCache(state, { sub: SUBDIR }, 'sub'), 'sub/note.md.gpg')
+    assert.ok(buttonShown(state), 'button visible from persisted payload alone')
+  })
+
+  it('a fresh selection without a warning shows nothing', () => {
+    let state = loadFromCache(
+      { notes: [], dirs: [], currentBrowsePath: '', currentFile: null },
+      { '(root)': ROOT },
+      '(root)',
+    )
+    state = selectNote(state, 'root.md.gpg')
+    assert.ok(!buttonShown(state), 'no button when no warning was restored or persisted')
+  })
+
+  it('init fallback reopens the pending-warning note when URL/lastNote were cleared', () => {
+    // Mirrors init(): when closeEditor (navigation) wiped the URL param and
+    // lastNote before reload, init now falls back to the pending refresh path
+    // and reopens it, so the ⚠️ Remote button shows for that note again.
+    let state: SnapState = {
+      notes: [],
+      dirs: [],
+      currentBrowsePath: '',
+      currentFile: null,
+      pendingRefresh: 'sub/note.md.gpg',
+    }
+    const path = state.pendingRefresh // init: urlOrLast || pendingRemoteRefresh?.path || single draft
+    assert.equal(path, 'sub/note.md.gpg', 'derived from pending refresh')
+    state = selectNote(loadFromCache(state, { sub: SUBDIR }, 'sub'), path)
+    assert.equal(state.currentFile, 'sub/note.md.gpg', 'warned note reopened')
+    assert.ok(buttonShown(state), 'button shown for reopened warned note')
+  })
+})
+
+describe('a connect prefetch must not advance the drafted note baseline (second-reload regression)', () => {
+  // User flow: edit locally → another device pushes → reload #1 shows the ⚠️
+  // button ✓ → reload #2 loses it ✗. Root cause: reload #1's connect re-fetched
+  // the fresher remote content into the note and cached it, so reload #2 loaded
+  // that as the dirty-compare baseline → remote === baseline → decideRemoteRefresh
+  // 'skip' → clearRemoteRefresh(). Mirrors app.ts doConnect merge: a drafted
+  // note's baseline (content BEFORE the prefetch) survives the fetch + cache.
+  function currentNote(state: SnapState, path: string): Note {
+    const found = state.notes.find(n => n.path === path)
+    assert.ok(found, `note ${path} present`)
+    return found
+  }
+
+  it('a connect prefetch does not advance the drafted note baseline', () => {
+    const B64_OLD = 'bG9jYWwtYmFzZWxpbmU=' // what the user originally opened/edited
+    const B64_NEW = 'bmV3ZXItcmVtb3Rl' // pushed from the other device
+    draftCache.set('root.md.gpg', 'MY-EDITED-DRAFT')
+    try {
+      const base = { ...ROOT, notes: [{ ...makeNote('root.md.gpg', 'root.md.gpg'), content: B64_OLD, sha: 'sha-old' }] }
+      // reload #1: loadFromCache restores the baseline; selectNote opens the note.
+      const afterLoad = selectNote(
+        loadFromCache({ notes: [], dirs: [], currentBrowsePath: '', currentFile: null }, { '(root)': base }, '(root)'),
+        'root.md.gpg',
+      )
+
+      // doConnect (mirror): parseEntries rebuilds notes; the naive prefetch would
+      // return the fresher remote content for the drafted note…
+      const prefetched = [{ ...makeNote('root.md.gpg', 'root.md.gpg'), content: B64_NEW, sha: 'sha-new' }]
+      // …but the baseline capture + merge keep the pre-connect content for drafts.
+      const baselineByPath = new Map(afterLoad.notes.map(n => [n.path, n]))
+      const merged = prefetched.map(n => (draftCache.has(n.path) ? (baselineByPath.get(n.path) ?? n) : n))
+      const mergedNote = merged.find(n => n.path === 'root.md.gpg')
+      assert.ok(mergedNote, 'merged note present')
+      assert.equal(mergedNote.content, B64_OLD, 'drafted note baseline untouched by prefetch')
+      assert.equal(
+        decideRemoteRefresh(mergedNote, true, true, B64_NEW, 'sha-new').action,
+        'flag',
+        'refresh still flags → ⚠️ button stays across reload #2',
+      )
+    } finally {
+      draftCache.delete('root.md.gpg')
+    }
+  })
+
+  it('reload #1 and #2 both decide flag when the baseline stays put', () => {
+    const B64_OLD = 'YmFzZWxpbmU='
+    const B64_NEW = 'bG9jYWwtYmFzZWxpbmU='
+    draftCache.set('root.md.gpg', 'DRAFT')
+    try {
+      const base = {
+        ...ROOT,
+        notes: [{ ...makeNote('root.md.gpg', 'root.md.gpg'), content: B64_OLD, sha: 'sha-old' }],
+      }
+      let state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
+      state = selectNote(loadFromCache(state, { '(root)': base }, '(root)'), 'root.md.gpg')
+
+      for (let reload = 1; reload <= 2; reload++) {
+        state = loadFromCache(state, { '(root)': base }, '(root)') // cache still holds baseline
+        const decision = decideRemoteRefresh(currentNote(state, 'root.md.gpg'), true, true, B64_NEW, 'sha-new')
+        assert.equal(decision.action, 'flag', `reload ${reload} flags (does not skip/clear)`)
+        assert.equal(currentNote(state, 'root.md.gpg').content, B64_OLD, `reload ${reload} baseline unchanged`)
+      }
+    } finally {
+      draftCache.delete('root.md.gpg')
+    }
+  })
+})
+
+describe('openNoteByPath prefetch opt-out keeps the dirty-flag baseline', () => {
+  function cachedSubWithContent(content: string | null): RecordData {
+    return {
+      notes: [{ ...makeNote('note.md.gpg', 'sub/note.md.gpg'), content }],
+      dirs: [],
+      currentBrowsePath: 'sub',
+    }
+  }
+
+  it('navigateToDir(prefetch:false) retains the OLD cached content, so a changed remote flags the warning', () => {
+    const navigated = navigateToDirNoPrefetch(
+      [makeNote('note.md.gpg', 'sub/note.md.gpg')],
+      cachedSubWithContent('old-remote-b64'),
+      'sub',
+    )
+    const reopened = selectNote(navigated, 'sub/note.md.gpg')
+    const note = reopened.notes.find(n => n.path === 'sub/note.md.gpg')!
+
+    // Baseline preserved → decideRemoteRefresh can see the remote changed.
+    assert.equal(note.content, 'old-remote-b64', 'baseline must stay the OLD cached content')
+    const decision = decideRemoteRefresh(note, /*isDirty*/ true, /*hasDraft*/ true, 'new-remote-b64', 'new-sha')
+    assert.equal(decision.action, 'flag', 'dirty reopen + changed remote → offer the warning button')
+  })
+
+  it('regression: the old prefetching navigateToDir advanced content to the new remote → no flag shown', () => {
+    // Old behavior: fetchAllNotesContent wrote the NEW b64 into the note's content.
+    const note = {
+      ...makeNote('note.md.gpg', 'sub/note.md.gpg'),
+      content: 'new-remote-b64' as string | null,
+      sha: 'new-sha',
+    }
+    const decision = decideRemoteRefresh(note, true, true, 'new-remote-b64', 'new-sha')
+    assert.equal(decision.action, 'skip', 'bug: remote === advanced listing content → warning never offered')
   })
 })

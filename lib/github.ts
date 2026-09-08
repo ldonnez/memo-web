@@ -205,7 +205,15 @@ const CONTENT_CONCURRENCY = 5
 
 export async function fetchAllNotesContent(config: Config, notes: Note[]): Promise<Note[]> {
   const updated = [...notes]
-  const queue = updated.map((n, i) => ({ note: n, index: i })).filter(({ note }) => !note.content)
+  const queue = updated
+    .map((n, i) => ({ note: n, index: i }))
+    .filter(({ note }) => !note.content)
+    // Never advance the baseline of a note with an active draft: if the prefetch
+    // pulls fresher remote content into the note, the next reload reads it as the
+    // dirty-compare baseline and decideRemoteRefresh sees remote === baseline →
+    // 'skip' → clears the persisted ⚠️ warning. The open note is refreshed by
+    // refreshOpenNoteContent() instead, which keeps the original baseline.
+    .filter(({ note }) => !draftCache.has(note.path))
 
   for (let start = 0; start < queue.length; start += CONTENT_CONCURRENCY) {
     const batch = queue.slice(start, start + CONTENT_CONCURRENCY)
@@ -224,6 +232,14 @@ export async function fetchAllNotesContent(config: Config, notes: Note[]): Promi
     )
   }
   return updated
+}
+
+export function restoreDraftBaselines(notes: Note[]): Note[] {
+  return notes.map(n => {
+    if (!draftCache.has(n.path)) return n
+    const baseline = contentCache.get(n.path)
+    return baseline ? { ...n, content: baseline } : n
+  })
 }
 
 export async function walkAllDirsAndPrefetch(
@@ -270,8 +286,13 @@ export async function walkAllDirsAndPrefetch(
       }))
 
       const withContent = await fetchAllNotesContent(config, notes)
+      // Drafted notes are skipped by fetchAllNotesContent, so restore their
+      // baseline (set at init from loadFromCache) before caching the dir record —
+      // otherwise the next reload reads a null baseline and the persisted ⚠️
+      // warning can never settle correctly.
+      const withBaselines = restoreDraftBaselines(withContent)
       await cacheNotesToLocalStorage(
-        withContent,
+        withBaselines,
         entries.filter((e): e is DirWithType => e.type === 'dir').map(e => ({ name: e.name, path: e.path })),
         dir,
       )

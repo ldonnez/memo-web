@@ -1,6 +1,16 @@
 import { describe, it } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { computeDirtyState, markNoteClean, revertNote, cleanNoteInList, formatNoteItem } from '../lib/util.ts'
+import {
+  computeDirtyState,
+  markNoteClean,
+  revertNote,
+  cleanNoteInList,
+  formatNoteItem,
+  applyRemoteContent,
+  decideRemoteRefresh,
+  serializePendingRefresh,
+  parsePendingRefresh,
+} from '../lib/util.ts'
 import type { Note } from '../lib/types.ts'
 
 function makeNote(overrides: Partial<Note> = {}): Note {
@@ -229,5 +239,126 @@ describe('save button state (isDirty → saveBtn.disabled = !isDirty)', () => {
       false,
       'computeDirtyState says clean when draft===original, but selectNote forces isDirty=true',
     )
+  })
+})
+
+describe('applyRemoteContent (open-note refresh after reconnect)', () => {
+  const remote = makeNote({
+    path: 'note.md.gpg',
+    decrypted: 'stale cached text',
+    originalText: 'stale cached text',
+    content: 'old-b64',
+    sha: 'old-sha',
+  })
+
+  it('replaces content + editor text with the fresh remote copy and clears dirty', () => {
+    const fresh = applyRemoteContent(remote, [remote], 'new-b64', 'fresh text from origin', 'new-sha')
+    assert.equal(fresh.currentFile.content, 'new-b64')
+    assert.equal(fresh.currentFile.sha, 'new-sha', 'sha updated to the fresh remote sha')
+    assert.equal(fresh.currentFile.decrypted, 'fresh text from origin')
+    assert.equal(fresh.currentFile.dirty, false)
+    assert.equal(fresh.currentContent, 'fresh text from origin')
+    assert.equal(fresh.originalContent, 'fresh text from origin')
+    assert.equal(fresh.isDirty, false)
+    assert.equal(fresh.notes[0]!.content, 'new-b64', 'listing note updated too')
+  })
+
+  it('keeps other notes untouched', () => {
+    const other = makeNote({ path: 'other.md.gpg' })
+    const fresh = applyRemoteContent(remote, [remote, other], 'new-b64', 'fresh', 'new-sha')
+    assert.equal(fresh.notes[1], other, 'unrelated note object identity preserved')
+  })
+
+  it('matches the markNoteClean contract: fresh state is save-disabled after refresh', () => {
+    // Re-deriving dirty state from the refreshed note + content stays clean.
+    const fresh = applyRemoteContent(remote, [remote], 'new-b64', 'fresh text', 'new-sha')
+    const dirty = computeDirtyState(fresh.notes, fresh.currentFile, fresh.currentContent, fresh.originalContent)
+    assert.equal(dirty.isDirty, false)
+  })
+})
+
+describe('decideRemoteRefresh (dirty note sits on a changed remote)', () => {
+  const remote = makeNote({
+    path: 'note.md.gpg',
+    decrypted: 'stale cached text',
+    originalText: 'stale cached text',
+    content: 'old-b64',
+    sha: 'old-sha',
+  })
+
+  it('no open note → skip', () => {
+    assert.deepEqual(decideRemoteRefresh(null, false, false, 'new-b64', 'new-sha'), { action: 'skip' })
+  })
+
+  it('remote missing → skip', () => {
+    assert.deepEqual(decideRemoteRefresh(remote, false, false, null, 'new-sha'), { action: 'skip' })
+  })
+
+  it('remote unchanged → skip', () => {
+    assert.deepEqual(decideRemoteRefresh(remote, false, false, 'old-b64', 'old-sha'), { action: 'skip' })
+  })
+
+  it('remote changed + clean note → auto apply', () => {
+    assert.deepEqual(decideRemoteRefresh(remote, false, false, 'new-b64', 'new-sha'), {
+      action: 'apply',
+      content: 'new-b64',
+      sha: 'new-sha',
+    })
+  })
+
+  it('remote changed + dirty note → flag (never clobber unsaved edits)', () => {
+    assert.deepEqual(decideRemoteRefresh(remote, true, false, 'new-b64', 'new-sha'), {
+      action: 'flag',
+      content: 'new-b64',
+      sha: 'new-sha',
+    })
+  })
+
+  it('remote changed + existing draft → flag', () => {
+    assert.deepEqual(decideRemoteRefresh(remote, false, true, 'new-b64', 'new-sha'), {
+      action: 'flag',
+      content: 'new-b64',
+      sha: 'new-sha',
+    })
+  })
+
+  it('dirty state loses (user saves first) → remote now matches → skip', () => {
+    const saved = applyRemoteContent(remote, [remote], 'new-b64', 'fresh', 'new-sha')
+    assert.deepEqual(decideRemoteRefresh(saved.currentFile, false, false, 'new-b64', 'new-sha'), {
+      action: 'skip',
+    })
+  })
+})
+
+describe('pending remote refresh persistence (survives reload)', () => {
+  const PR = { path: 'sub/note.md.gpg', content: 'remote-b64', sha: 'remote-sha' }
+
+  it('serialize → parse round-trips the exact payload', () => {
+    const raw = serializePendingRefresh(PR)!
+    assert.equal(typeof raw, 'string')
+    assert.deepEqual(parsePendingRefresh(raw), PR)
+    assert.equal(parsePendingRefresh(raw)!.content, 'remote-b64')
+    assert.equal(parsePendingRefresh(raw)!.sha, 'remote-sha')
+  })
+
+  it('null payload serializes to nothing and parses back to null', () => {
+    assert.equal(serializePendingRefresh(null), null)
+    assert.equal(serializePendingRefresh(null) !== 'null', true, 'must not store the string "null"')
+    assert.equal(parsePendingRefresh(null), null)
+  })
+
+  it('malformed JSON → null (no crash, stale flag dropped)', () => {
+    assert.equal(parsePendingRefresh('not json'), null)
+  })
+
+  it('incomplete payload → null', () => {
+    assert.equal(parsePendingRefresh(JSON.stringify({ path: 'x.md.gpg' })), null, 'missing content/sha')
+    assert.equal(parsePendingRefresh(JSON.stringify({})), null)
+    assert.equal(parsePendingRefresh(''), null)
+  })
+
+  it('extra keys are ignored, core fields win', () => {
+    const raw = JSON.stringify({ ...PR, old: true, ts: 123 })
+    assert.deepEqual(parsePendingRefresh(raw), PR)
   })
 })

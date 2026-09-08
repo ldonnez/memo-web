@@ -179,6 +179,74 @@ export function cleanNoteInList(notes: Note[], filePath: string): Note[] {
   return notes.map(n => (n.path === filePath ? { ...n, dirty: false } : n))
 }
 
+export interface RemoteRefreshResult {
+  currentFile: Note
+  notes: Note[]
+  currentContent: string
+  originalContent: string
+  isDirty: false
+}
+
+export function applyRemoteContent(
+  note: Note,
+  notes: Note[],
+  content: string,
+  decrypted: string,
+  sha: string,
+): RemoteRefreshResult {
+  const updated: Note = { ...note, content, decrypted, dirty: false, originalText: decrypted, sha }
+  return {
+    currentFile: updated,
+    notes: notes.map(n => (n.path === note.path ? updated : n)),
+    currentContent: decrypted,
+    originalContent: decrypted,
+    isDirty: false,
+  }
+}
+
+export type RemoteRefreshDecision =
+  | { action: 'skip' }
+  | { action: 'apply'; content: string; sha: string }
+  | { action: 'flag'; content: string; sha: string }
+
+export function decideRemoteRefresh(
+  openFile: Note | null,
+  isDirty: boolean,
+  hasDraft: boolean,
+  remoteContent: string | null,
+  remoteSha: string,
+): RemoteRefreshDecision {
+  if (!openFile || !remoteContent) return { action: 'skip' }
+  if (remoteContent === openFile.content) return { action: 'skip' }
+  if (isDirty || hasDraft) return { action: 'flag', content: remoteContent, sha: remoteSha }
+  return { action: 'apply', content: remoteContent, sha: remoteSha }
+}
+
+export interface PendingRefresh {
+  path: string
+  content: string
+  sha: string
+}
+
+/** Serialize the persisted "remote changed while dirty" warning (null → nothing to store). */
+export function serializePendingRefresh(pr: PendingRefresh | null): string | null {
+  return pr ? JSON.stringify(pr) : null
+}
+
+/** Parse a persisted warning; returns null when missing, malformed, or incomplete. */
+export function parsePendingRefresh(raw: string | null): PendingRefresh | null {
+  if (!raw) return null
+  try {
+    const pr = JSON.parse(raw) as Partial<PendingRefresh>
+    if (typeof pr.path !== 'string' || typeof pr.content !== 'string' || typeof pr.sha !== 'string') {
+      return null
+    }
+    return { path: pr.path, content: pr.content, sha: pr.sha }
+  } catch {
+    return null
+  }
+}
+
 function cacheKeyForPath(path: string | undefined): string {
   return path ? `memoweb_cache:${path}` : 'memoweb_cache:'
 }

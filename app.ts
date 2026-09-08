@@ -24,6 +24,10 @@ import {
   computeDirtyState,
   markNoteClean,
   revertNote,
+  applyRemoteContent,
+  decideRemoteRefresh,
+  serializePendingRefresh,
+  parsePendingRefresh,
   cacheNotesToLocalStorage,
   loadCachedNotes,
   computeCachedTotals,
@@ -35,6 +39,7 @@ import {
   getLastNotePath,
   clearLastNotePath,
 } from './lib/util.ts'
+import type { PendingRefresh } from './lib/util.ts'
 import {
   contentCache,
   draftCache,
@@ -82,6 +87,8 @@ interface AppState {
 // ============= STATE =============
 let cm: CmAdapter | null = null
 let taskIdx = 0
+let pendingRemoteRefresh: { path: string; content: string; sha: string } | null = null
+const PENDING_REFRESH_KEY = 'memoweb_pending_refresh'
 
 function byId(id: string): HTMLElement | null {
   return document.getElementById(id)
@@ -302,9 +309,12 @@ async function doConnect(c: Config, signal: AbortSignal) {
   if (state.currentBrowsePath !== startPath) return
 
   // A reconnect must never yank the user out of the directory holding an open
-  // note (e.g. a subdir restored by init's openNoteByPath). Bail instead of
-  // resetting currentBrowsePath / closing the editor on the configured root.
-  if (state.currentFile && state.currentBrowsePath !== path) return
+  // note (e.g. a subdir restored by init's openNoteByPath). Keep the restored
+  // navigation, but still pull the latest remote content into the open editor.
+  if (state.currentFile && state.currentBrowsePath !== path) {
+    await refreshOpenNoteContent()
+    return
+  }
 
   if (!Array.isArray(entries)) {
     console.warn('Unexpected response from GitHub API, expected array, got:', entries)
@@ -315,9 +325,19 @@ async function doConnect(c: Config, signal: AbortSignal) {
   }
 
   const { dirs, notes } = parseEntries(entries, ext)
+  // Capture the pre-parse notes (the cached baseline) BEFORE fetchAllNotesContent,
+  // so a drafted note's baseline survives the connect's own content prefetch and
+  // cache write. Otherwise the first reload re-keys the dirty-compare baseline to
+  // the freshest remote content, and the second reload's decideRemoteRefresh sees
+  // remote === baseline → 'skip' → clears the persisted ⚠️ warning.
+  const baselineByPath = new Map(state.notes.map(n => [n.path, n]))
   state = { ...state, dirs, notes, currentBrowsePath: path, totalNotes: notes.length, totalDirs: dirs.length }
   pruneContentCache(notes, path)
-  state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) }
+  const fetched = await fetchAllNotesContent(state.config, state.notes)
+  state = {
+    ...state,
+    notes: fetched.map(n => (draftCache.has(n.path) ? (baselineByPath.get(n.path) ?? n) : n)),
+  }
   if (signal.aborted) return
   if (state.currentBrowsePath !== path) return
 
@@ -341,7 +361,126 @@ async function doConnect(c: Config, signal: AbortSignal) {
     const stillExists = state.notes.find(n => n.path === currentFile.path)
     if (!stillExists) {
       closeEditor()
+    } else {
+      await refreshOpenNoteContent()
     }
+  }
+}
+
+/** Re-fetch the open note from GitHub and push new content into the editor. */
+async function refreshOpenNoteContent() {
+  const openFile = state.currentFile
+  if (!openFile) return
+  try {
+    const data = await ghGetFile(state.config, openFile.path)
+    if (!data || state.currentFile?.path !== openFile.path) return
+    const decision = decideRemoteRefresh(openFile, state.isDirty, draftCache.has(openFile.path), data.content, data.sha)
+    if (decision.action === 'skip') {
+      if (pendingRemoteRefresh?.path === openFile.path || persistedRefreshFor(openFile.path)) {
+        clearRemoteRefresh()
+      }
+      return
+    }
+    if (decision.action === 'flag') {
+      setPendingRemoteRefresh({ path: openFile.path, content: decision.content, sha: decision.sha })
+      return
+    }
+    const binary = Uint8Array.from(atob(data.content), c => c.charCodeAt(0))
+    const decrypted = await decryptContent(state.config, binary)
+    if (state.currentFile?.path !== openFile.path) return
+    if (state.isDirty || draftCache.has(openFile.path)) {
+      setPendingRemoteRefresh({ path: openFile.path, content: data.content, sha: data.sha })
+      return
+    }
+    const result = applyRemoteContent(openFile, state.notes, data.content, decrypted, data.sha)
+    state = { ...state, ...result }
+    setContent(result.currentContent)
+    updatePreview()
+  } catch (e) {
+    console.warn('Failed to refresh open note:', e instanceof Error ? e.message : e)
+  }
+}
+
+function persistedRefreshFor(path: string): PendingRefresh | null {
+  try {
+    const pr = parsePendingRefresh(localStorage.getItem(PENDING_REFRESH_KEY))
+    return pr && pr.path === path ? pr : null
+  } catch {
+    return null
+  }
+}
+
+function syncRemoteRefreshBtn() {
+  const btn = byId('remoteRefreshBtn')
+  if (!btn) return
+  const openPath = state.currentFile?.path
+  // Derive from BOTH memory and the persisted payload: even if something wiped
+  // pendingRemoteRefresh during a reopen, the stored warning still shows.
+  const show = !!openPath && (pendingRemoteRefresh?.path === openPath || persistedRefreshFor(openPath) !== null)
+  btn.style.visibility = show ? 'visible' : 'hidden'
+}
+
+function setPendingRemoteRefresh(pr: PendingRefresh) {
+  pendingRemoteRefresh = pr
+  const raw = serializePendingRefresh(pr)
+  if (raw !== null) {
+    try {
+      localStorage.setItem(PENDING_REFRESH_KEY, raw)
+    } catch {}
+  }
+  syncRemoteRefreshBtn()
+}
+
+/** Restore a persisted "remote changed while dirty" warning after a reload. */
+function restorePendingRemoteRefresh() {
+  let pr: PendingRefresh | null
+  try {
+    pr = parsePendingRefresh(localStorage.getItem(PENDING_REFRESH_KEY))
+  } catch {
+    pr = null
+  }
+  if (!pr) return
+  if (!draftCache.has(pr.path)) {
+    clearRemoteRefresh()
+    return
+  }
+  pendingRemoteRefresh = pr
+}
+
+function clearRemoteRefresh() {
+  pendingRemoteRefresh = null
+  try {
+    localStorage.removeItem(PENDING_REFRESH_KEY)
+  } catch {}
+  syncRemoteRefreshBtn()
+}
+
+/** Discard local edits and load the latest remote version of the open note. */
+async function applyPendingRemoteRefresh() {
+  const openFile = state.currentFile
+  if (!openFile) return
+  const remote =
+    pendingRemoteRefresh?.path === openFile.path ? pendingRemoteRefresh : persistedRefreshFor(openFile.path)
+  if (!remote) return
+  clearRemoteRefresh()
+  try {
+    const binary = Uint8Array.from(atob(remote.content), c => c.charCodeAt(0))
+    const decrypted = await decryptContent(state.config, binary)
+    if (state.currentFile?.path !== openFile.path) return
+    removeDraft(openFile.path)
+    contentCache.set(openFile.path, remote.content)
+    const result = applyRemoteContent(openFile, state.notes, remote.content, decrypted, remote.sha)
+    state = { ...state, ...result }
+    setContent(result.currentContent)
+    updatePreview()
+    byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
+    byEl<HTMLButtonElement>('discardBtn').style.visibility = 'hidden'
+    byEl<HTMLElement>('editorStatus').textContent = ''
+    byEl<HTMLButtonElement>('saveBtn').disabled = true
+    renderNoteList()
+    toast('Loaded latest version from remote', 'info')
+  } catch (e) {
+    toast(`Failed to load remote version: ${errMsg(e)}`, 'error')
   }
 }
 
@@ -353,6 +492,7 @@ async function pullChanges() {
   }
 
   const dirtyFile = state.currentFile
+  clearRemoteRefresh()
   if (dirtyFile && state.isDirty) {
     toast('⚠️ Unsaved changes will be overwritten by remote', 'warning')
     removeDraft(dirtyFile.path)
@@ -466,6 +606,7 @@ function renderBreadcrumb() {
 function renderNoteList() {
   const list = byEl<HTMLElement>('noteList')
   renderBreadcrumb()
+  syncRemoteRefreshBtn()
 
   if (state.dirs.length === 0 && state.notes.length === 0) {
     const msg = state.connected ? 'Empty directory' : 'Configure your repo in settings to get started'
@@ -527,7 +668,9 @@ async function openNoteByPath(path: string) {
   if (parts.length > 1) {
     const dir = parts.slice(0, -1).join('/')
     try {
-      await navigateToDir(dir)
+      // No prefetch: advance the target note's content would clobber the
+      // dirty-compare baseline refreshOpenNoteContent relies on.
+      await navigateToDir(dir, { prefetch: false })
       note = state.notes.find(n => n.path === path)
       if (note) selectNote(path)
     } catch (e) {
@@ -536,7 +679,8 @@ async function openNoteByPath(path: string) {
   }
 }
 
-async function navigateToDir(dirPath: string) {
+async function navigateToDir(dirPath: string, opts: { prefetch?: boolean } = {}) {
+  const { prefetch = true } = opts
   const dirtyFile = state.currentFile
   if (dirtyFile && state.isDirty) {
     saveDraft(dirtyFile.path, state.currentContent)
@@ -561,8 +705,25 @@ async function navigateToDir(dirPath: string) {
     closeEditor()
     pruneContentCache(notes, dirPath)
 
-    state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) }
-    if (state.currentBrowsePath !== dirPath) return
+    if (prefetch) {
+      state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) }
+      if (state.currentBrowsePath !== dirPath) return
+    } else {
+      // Keep the previous cached content (esp. the reopened note's old version)
+      // so offline open still works and refreshOpenNoteContent has a baseline
+      // to diff against.
+      const cached = await loadCachedNotes(dirPath || '')
+      if (cached?.notes) {
+        const prev = new Map(cached.notes.map(n => [n.path, n]))
+        state = {
+          ...state,
+          notes: state.notes.map(n => {
+            const p = prev.get(n.path)
+            return p?.content ? { ...n, content: p.content, sha: p.sha ?? n.sha } : n
+          }),
+        }
+      }
+    }
 
     setConnectionStatus(`Connected · ${buildStatusText(state.totalNotes, state.totalDirs)}`, true)
     renderNoteList()
@@ -1024,6 +1185,7 @@ function discardChanges() {
 
   // Existing note — revert to last saved content
   removeDraft(note.path)
+  clearRemoteRefresh()
   const result = revertNote(note, state.notes)
   state = { ...state, ...result }
 
@@ -1062,6 +1224,7 @@ async function saveNote() {
     }
 
     toast('Note saved successfully', 'success')
+    clearRemoteRefresh()
     byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
     byEl<HTMLButtonElement>('discardBtn').style.visibility = 'hidden'
     btn.disabled = true
@@ -1104,6 +1267,7 @@ async function newNote() {
   byEl<HTMLElement>('editor').style.display = 'flex'
   byEl<HTMLElement>('editorFilename').textContent = `${name.trim()}${ext}`
   byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
+  clearRemoteRefresh()
   byEl<HTMLElement>('editorStatus').textContent = '🆕 New note'
   setContent(`# ${name.trim()}\n\n`)
   byEl<HTMLButtonElement>('saveBtn').disabled = false
@@ -1142,6 +1306,7 @@ async function deleteNote() {
     const deletedPath = state.currentFile.path
     removeDraft(deletedPath)
     removeCachedContent(deletedPath)
+    clearRemoteRefresh()
     state = { ...state, notes: state.notes.filter(n => n.path !== deletedPath) }
     closeEditor()
     toast('Note deleted', 'info')
@@ -1269,6 +1434,14 @@ window.addEventListener('load', syncHeaderH)
 window.addEventListener('resize', syncHeaderH)
 window.addEventListener('orientationchange', () => setTimeout(syncHeaderH, 100))
 
+// When the network comes back, reconnect in the background so the restored note
+// picks up origin changes (refreshOpenNoteContent) without being navigated away.
+window.addEventListener('online', () => {
+  if (state.config.ghToken && state.config.ghOwner && state.config.ghRepo) {
+    connect(true).catch(e => console.error('Background connect failed:', e))
+  }
+})
+
 // Close sidebar when selecting a note on mobile
 document.addEventListener('click', e => {
   const sidebar = byEl<HTMLElement>('sidebar')
@@ -1286,9 +1459,17 @@ loadConfig()
 
 async function init() {
   restoreDrafts()
+  restorePendingRemoteRefresh()
   if (state.config.ghToken && state.config.ghOwner && state.config.ghRepo) {
     await loadFromCache(state.config.ghPath || '')
-    const path = getUrlParam('path') || getLastNotePath()
+    const urlOrLast = getUrlParam('path') || getLastNotePath()
+    const path =
+      urlOrLast ||
+      // After navigation that cleared the URL/last-note hint (closeEditor), a
+      // note with a pending remote-refresh warning or the sole draft is still
+      // the best candidate to reopen, so the ⚠️ Remote button survives reload.
+      pendingRemoteRefresh?.path ||
+      (draftCache.size === 1 ? [...draftCache.keys()][0] : '')
     if (path) await openNoteByPath(path)
     connect(true).catch(e => console.error('Background connect failed:', e))
   }
@@ -1362,6 +1543,7 @@ function bindEvents() {
   // Editor header actions
   byId('previewToggle')?.addEventListener('click', togglePreview)
   byId('discardBtn')?.addEventListener('click', discardChanges)
+  byId('remoteRefreshBtn')?.addEventListener('click', applyPendingRemoteRefresh)
   byId('saveBtn')?.addEventListener('click', saveNote)
   byId('deleteBtn')?.addEventListener('click', deleteNote)
 
