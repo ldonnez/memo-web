@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { markNoteClean, cleanNoteInList, formatNoteItem } from '../lib/util.ts'
+import { markNoteClean, cleanNoteInList, saveNoteClean, formatNoteItem } from '../lib/util.ts'
 import { makeNote } from './helpers.ts'
 import type { Note, Dir } from '../lib/types.ts'
 
@@ -66,7 +66,7 @@ function simulateFetchAllNotesContent(
   })
 }
 
-// Simulates saveNote's state update: markNoteClean + update cache + remove draft
+// Simulates saveNote's state update: saveNoteClean + update cache + remove draft
 function simulateSave(
   state: TestState,
   notePath: string,
@@ -77,14 +77,12 @@ function simulateSave(
   const note = state.notes.find(n => n.path === notePath)
   if (!note) return state
   const b64 = Buffer.from(savedText).toString('base64')
-  const clean = markNoteClean(note, state.notes, savedText)
+  const clean = saveNoteClean(note, state.notes, b64, 'newsha', savedText)
   draftCache.delete(notePath)
   contentCache.set(notePath, b64)
   return {
     ...state,
     ...clean,
-    notes: clean.notes.map(n => (n.path === notePath ? { ...n, content: b64 } : n)),
-    currentFile: { ...clean.currentFile, sha: 'newsha', content: b64 },
   }
 }
 
@@ -298,7 +296,7 @@ describe('contentCache — save updates both cache and list', () => {
     assert.strictEqual(remapped[0]!.content, savedB64, 'remapped note has new b64')
   })
 
-  it('updates SHA in currentFile but not in notes array', () => {
+  it('propagates the new SHA to both currentFile and notes array', () => {
     const cc = new Map<string, string>()
     const dc = new Map<string, string>()
     const fakeContent = (_p: string) => ({ content: 'b64', sha: 'oldsha' })
@@ -308,10 +306,13 @@ describe('contentCache — save updates both cache and list', () => {
 
     state = simulateSave(state, 'a.md.gpg', 'saved', cc, dc)
     assert.strictEqual(state.currentFile!.sha, 'newsha', 'currentFile.sha updated')
-    assert.notStrictEqual(
-      state.currentFile!.sha,
+    // Regression: previously only currentFile got the new SHA; state.notes kept
+    // the stale SHA, which the IndexedDB cache persisted → false 409 conflicts
+    // after a reload.
+    assert.strictEqual(
       state.notes.find(n => n.path === 'a.md.gpg')!.sha,
-      'notes array sha lags behind currentFile.sha — not updated during save',
+      'newsha',
+      'notes array SHA stays in sync with currentFile',
     )
   })
 })

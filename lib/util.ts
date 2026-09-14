@@ -179,6 +179,61 @@ export function cleanNoteInList(notes: Note[], filePath: string): Note[] {
   return notes.map(n => (n.path === filePath ? { ...n, dirty: false } : n))
 }
 
+export interface SaveCleanResult {
+  currentFile: Note
+  notes: Note[]
+  originalContent: string
+  isDirty: false
+}
+
+/**
+ * State transition for a successful save. Marks the note clean and propagates
+ * the NEW blob SHA returned by GitHub into BOTH the open note and the sidebar
+ * list. Propagating only into currentFile (the old app.ts behavior) left the
+ * note object in state.notes — and therefore the IndexedDB cache — holding a
+ * stale SHA, so a later reload restored the stale SHA and the next save got a
+ * false 409 conflict against the user's own previous save.
+ */
+export function saveNoteClean(
+  note: Note,
+  notes: Note[],
+  b64Content: string,
+  newSha: string,
+  decryptedText?: string,
+): SaveCleanResult {
+  const text = decryptedText ?? ''
+  const updated: Note = {
+    ...note,
+    dirty: false,
+    decrypted: text,
+    originalText: text,
+    content: b64Content,
+    sha: newSha,
+  }
+  return {
+    currentFile: updated,
+    notes: notes.map(n => (n.path === note.path ? updated : n)),
+    originalContent: text,
+    isDirty: false,
+  }
+}
+
+/**
+ * Reconcile an open note's blob SHA with the remote when the content matches
+ * but the SHA is stale (e.g. the app cached its own prior save under the old
+ * SHA). Returns null when the SHA already matches, otherwise a state update
+ * that also fixes the sidebar list copy.
+ */
+export function reconcileSha(
+  note: Note,
+  notes: Note[],
+  remoteSha: string,
+): { currentFile: Note; notes: Note[] } | null {
+  if (note.sha === remoteSha) return null
+  const updated: Note = { ...note, sha: remoteSha }
+  return { currentFile: updated, notes: notes.map(n => (n.path === note.path ? updated : n)) }
+}
+
 export interface RemoteRefreshResult {
   currentFile: Note
   notes: Note[]

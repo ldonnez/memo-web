@@ -23,6 +23,8 @@ import {
   formatNoteItem,
   computeDirtyState,
   markNoteClean,
+  saveNoteClean,
+  reconcileSha,
   revertNote,
   applyRemoteContent,
   decideRemoteRefresh,
@@ -379,6 +381,11 @@ async function refreshOpenNoteContent() {
       if (pendingRemoteRefresh?.path === openFile.path || persistedRefreshFor(openFile.path)) {
         clearRemoteRefresh()
       }
+      // Content matches the remote, but the SHA can still be stale (e.g. the
+      // cache persisted the app's own prior save under the old SHA). Reconcile
+      // it so the next save does not 409 against the user's own previous save.
+      const reconciled = reconcileSha(openFile, state.notes, data.sha)
+      if (reconciled) state = { ...state, ...reconciled }
       return
     }
     if (decision.action === 'flag') {
@@ -1213,15 +1220,11 @@ async function saveNote() {
     const b64 = typeof encrypted === 'string' ? btoa(encrypted) : arrayToBase64(encrypted)
 
     const result = await ghPutFile(state.config, note.path, encrypted, commitMsg(), note.sha)
-    const clean = markNoteClean(note, state.notes, text)
+    const clean = saveNoteClean(note, state.notes, b64, result.content.sha, text)
     removeDraft(note.path)
     contentCache.set(note.path, b64)
-    state = {
-      ...state,
-      ...clean,
-      notes: clean.notes.map(n => (n.path === note.path ? { ...n, content: b64 } : n)),
-      currentFile: { ...clean.currentFile, sha: result.content.sha, content: b64 },
-    }
+    state = { ...state, ...clean }
+    await cacheNotesToLocalStorage(clean.notes, state.dirs, state.currentBrowsePath)
 
     toast('Note saved successfully', 'success')
     clearRemoteRefresh()
