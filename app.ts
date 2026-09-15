@@ -10,7 +10,18 @@ import {
   insertTimestamp,
   PASS,
 } from './lib/editor.ts'
-import { createEditor } from './lib/cm.ts'
+import {
+  createEditor,
+  setTheme,
+  clearHistory,
+  replaceDoc,
+  setCursor,
+  setSelection,
+  addMark,
+  clearAllMarks,
+  offsetToDocPos,
+  type CmMark,
+} from './lib/cm.ts'
 import {
   escHtml,
   getUrlParam,
@@ -66,8 +77,8 @@ import hljs from './lib/hljs.ts'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { registerSW } from 'virtual:pwa-register'
-import type { KeyBinding } from '@codemirror/view'
-import type { CachedRecord, CmAdapter, CmMark, CmPos, Config, Dir, Note } from './lib/types.ts'
+import { EditorView, type KeyBinding } from '@codemirror/view'
+import type { CachedRecord, Config, Dir, Note } from './lib/types.ts'
 
 registerSW({ immediate: true, onRegisteredSW: () => {} })
 
@@ -87,7 +98,7 @@ interface AppState {
 }
 
 // ============= STATE =============
-let cm: CmAdapter | null = null
+let cm: EditorView | null = null
 let taskIdx = 0
 let pendingRemoteRefresh: { path: string; content: string; sha: string } | null = null
 const PENDING_REFRESH_KEY = 'memoweb_pending_refresh'
@@ -140,12 +151,12 @@ async function loadFromCache(path: string, extraState: Partial<AppState> = {}) {
 }
 
 function getContent() {
-  return cm ? cm.getValue() : byEl<HTMLTextAreaElement>('editorContent')?.value || ''
+  return cm ? cm.state.doc.toString() : byEl<HTMLTextAreaElement>('editorContent')?.value || ''
 }
 function setContent(val: string) {
   if (cm) {
-    cm.setValue(val)
-    cm.clearHistory()
+    replaceDoc(cm, val)
+    clearHistory(cm)
   } else {
     byEl<HTMLTextAreaElement>('editorContent').value = val
   }
@@ -653,14 +664,16 @@ function formatDoc() {
   import('prettier')
     .then(prettier => Promise.all([prettier, import('prettier/plugins/markdown')]))
     .then(([prettier, { default: markdown }]) =>
-      prettier.format(editor.getValue(), { parser: 'markdown', plugins: [markdown] }),
+      prettier.format(editor.state.doc.toString(), { parser: 'markdown', plugins: [markdown] }),
     )
     .then(formatted => {
-      const cursor = editor.getCursor(),
-        scrollInfo = editor.getScrollInfo()
-      editor.setValue(formatted)
-      editor.setCursor(cursor, undefined, { scroll: false })
-      editor.scrollTo(scrollInfo.left, scrollInfo.top)
+      const cursor = offsetToDocPos(editor, editor.state.selection.main.head)
+      const scrollInfo = editor.scrollDOM
+      replaceDoc(editor, formatted)
+      clearHistory(editor)
+      setCursor(editor, cursor, false)
+      editor.scrollDOM.scrollLeft = scrollInfo.scrollLeft
+      editor.scrollDOM.scrollTop = scrollInfo.scrollTop
       onEditorInput()
     })
 }
@@ -841,7 +854,7 @@ function closeEditor() {
 
 // ============= EDITOR =============
 document.addEventListener('DOMContentLoaded', () => {
-  // Init editor (CodeMirror 6 via adapter in lib/cm.js)
+  // Init editor (CodeMirror 6, created in lib/cm.ts); textarea is the fallback
   const ta = byEl<HTMLTextAreaElement>('editorContent')
   const host = byEl<HTMLElement>('editorHost')
   if (host) {
@@ -882,7 +895,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Refresh editor when shown (fixes layout)
   const observer = new MutationObserver(() => {
     const editor = cm
-    if (editor) setTimeout(() => editor.refresh(), 50)
+    if (editor) setTimeout(() => editor.requestMeasure(), 50)
   })
   observer.observe(byEl<HTMLElement>('editor'), { attributes: true, attributeFilter: ['style'] })
 
@@ -958,7 +971,7 @@ function togglePreview() {
     byEl<HTMLElement>('previewPane').innerHTML = ''
   }
   const editor = cm
-  if (editor) setTimeout(() => editor.refresh(), 50)
+  if (editor) setTimeout(() => editor.requestMeasure(), 50)
 }
 
 function updatePreview(resetScroll = true) {
@@ -995,7 +1008,7 @@ marked.use({
 })
 
 // ============= SEARCH =============
-type CmMatch = { from: CmPos; to: CmPos }
+type CmMatch = { from: number; to: number }
 let searchMatches: Array<CmMatch | Range> = []
 let searchIndex = -1
 let searchCurrentMark: CmMark | null = null
@@ -1063,14 +1076,12 @@ function doSearch(query: string, forcePreview: boolean) {
 
 function searchInEditor(query: string) {
   if (!cm) return
-  const text = cm.getValue()
+  const text = cm.state.doc.toString()
   const matches = findMatchRanges(text, query)
   searchMatches = []
   for (const m of matches) {
-    const from = cm.posFromIndex(m.from)
-    const to = cm.posFromIndex(m.to)
-    searchMatches.push({ from, to })
-    cm.markText(from, to, { className: 'search-match' })
+    searchMatches.push({ from: m.from, to: m.to })
+    addMark(cm, m.from, m.to, 'search-match')
   }
   if (searchMatches.length) {
     searchIndex = 0
@@ -1144,9 +1155,9 @@ function selectSearchMatch(index: number) {
     }
     const m = searchMatches[searchIndex]
     if (m && 'from' in m && 'to' in m) {
-      editor.setSelection(m.from, m.to)
-      searchCurrentMark = editor.markText(m.from, m.to, { className: 'search-match-current' })
-      editor.scrollIntoView(m.from, 100)
+      setSelection(editor, m.from, m.to)
+      searchCurrentMark = addMark(editor, m.from, m.to, 'search-match-current')
+      editor.dispatch({ effects: EditorView.scrollIntoView(m.from, { y: 'nearest', yMargin: 100 }) })
     }
   }
   getSearchCountEls().forEach(el => (el.textContent = `${searchIndex + 1} of ${searchMatches.length}`))
@@ -1166,8 +1177,8 @@ function clearSearch() {
   clearTimeout(searchDebounce ?? undefined)
   CSS.highlights.clear()
   if (cm) {
-    cm.setCursor(cm.getCursor())
-    cm.getAllMarks().forEach(m => m.clear())
+    cm.dispatch({ selection: { anchor: cm.state.selection.main.head } })
+    clearAllMarks(cm)
   }
   searchMatches = []
   searchIndex = -1
@@ -1346,7 +1357,7 @@ function toggleTheme() {
     root.style.setProperty('--text', '#e6edf3')
     root.style.setProperty('--text-muted', '#8b949e')
     byEl<HTMLButtonElement>('themeBtn').textContent = '🌙'
-    if (cm) cm.setOption('theme', 'frappe')
+    if (cm) setTheme(cm, 'frappe')
   } else {
     root.style.setProperty('--bg', '#ffffff')
     root.style.setProperty('--surface', '#f6f8fa')
@@ -1355,7 +1366,7 @@ function toggleTheme() {
     root.style.setProperty('--text', '#1f2328')
     root.style.setProperty('--text-muted', '#656d76')
     byEl<HTMLButtonElement>('themeBtn').textContent = '☀️'
-    if (cm) cm.setOption('theme', 'latte')
+    if (cm) setTheme(cm, 'latte')
   }
 }
 

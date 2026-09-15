@@ -12,96 +12,78 @@ import {
   insertTimestamp,
   PASS,
 } from '../lib/editor.ts'
-import { makeCm, makeNote, type CmPos } from './helpers.ts'
+import { makeView, makeRecordingView, makeNote, type EditorAction } from './helpers.ts'
+
+function replaceAt(
+  actions: EditorAction[],
+  i: number,
+): {
+  replacement: string
+  start: { line: number; ch: number }
+  end?: { line: number; ch: number }
+} {
+  const a = actions[i]!
+  assert.equal(a.type, 'replace')
+  return a as Extract<EditorAction, { type: 'replace' }>
+}
+
+function cursorAt(actions: EditorAction[], i: number): { line: number; ch: number } {
+  const a = actions[i]!
+  assert.equal(a.type, 'cursor')
+  return (a as Extract<EditorAction, { type: 'cursor' }>).pos
+}
 
 describe('smartEnter', () => {
   it('replaces [x] with [ ] in the new line prefix', () => {
-    const calls: Array<{ replacement: string; start: CmPos; end?: CmPos }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 14 }),
-      getLine: () => '- [x] done task',
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-    })
-    smartEnter(cm, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0]!.replacement, '\n- [ ] ')
-    assert.deepEqual(calls[0]!.start, { line: 0, ch: 14 })
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('- [x] done task', { from: 14 }, actions)
+    smartEnter(view, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
+    assert.equal(actions.length, 1)
+    const a = replaceAt(actions, 0)
+    assert.equal(a.replacement, '\n- [ ] ')
+    assert.deepEqual(a.start, { line: 0, ch: 14 })
   })
 
   it('preserves [ ] (open todo) in the new line prefix', () => {
-    const calls: Array<{ replacement: string; start: CmPos; end?: CmPos }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 14 }),
-      getLine: () => '- [ ] open task',
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-    })
-    smartEnter(cm, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0]!.replacement, '\n- [ ] ')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('- [ ] open task', { from: 14 }, actions)
+    smartEnter(view, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
+    assert.equal(actions.length, 1)
+    assert.equal(replaceAt(actions, 0).replacement, '\n- [ ] ')
   })
 
   it('preserves plain bullet list prefix (no checkbox)', () => {
-    const calls: Array<{ replacement: string; start: CmPos; end?: CmPos }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 7 }),
-      getLine: () => '- plain item',
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-    })
-    smartEnter(cm, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0]!.replacement, '\n- ')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('- plain item', { from: 7 }, actions)
+    smartEnter(view, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
+    assert.equal(actions.length, 1)
+    assert.equal(replaceAt(actions, 0).replacement, '\n- ')
   })
 
   it('returns Pass when cursor is before the list marker', () => {
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 0 }),
-      getLine: () => '- [x] done task',
-      replaceRange: () => assert.fail('should not be called'),
-    })
-    assert.equal(smartEnter(cm, { formatTable: () => {}, onEditorInput: () => {} }), PASS)
+    const view = makeView('- [x] done task', { from: 0 })
+    assert.equal(smartEnter(view, { formatTable: () => {}, onEditorInput: () => {} }), PASS)
+    assert.equal(view.state.doc.toString(), '- [x] done task')
   })
 
   it('removes the line when the rest after prefix is empty', () => {
-    const calls: Array<{ replacement: string; start: CmPos; end?: CmPos }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 6 }),
-      getLine: () => '- [x] ',
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-    })
-    smartEnter(cm, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0]!.replacement, '')
-    assert.deepEqual(calls[0]!.start, { line: 0, ch: 0 })
-    assert.deepEqual(calls[0]!.end, { line: 0, ch: 6 })
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('- [x] ', { from: 6 }, actions)
+    smartEnter(view, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
+    assert.equal(actions.length, 1)
+    const a = replaceAt(actions, 0)
+    assert.equal(a.replacement, '')
+    assert.deepEqual(a.start, { line: 0, ch: 0 })
+    assert.deepEqual(a.end, { line: 0, ch: 6 })
   })
 
   it('calls formatTable when on a pipe-delimited table row', () => {
     let called = false
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 10 }),
-      getLine: () => '| a | b |',
-      replaceRange: () => assert.fail('should not be called'),
-    })
-    smartEnter(cm, {
-      formatTable: (c, line, _cb) => {
+    const view = makeView('| a | b |', { from: 9 })
+    smartEnter(view, {
+      formatTable: (c, line) => {
         called = true
-        assert.equal(c, cm)
+        assert.equal(c, view)
         assert.equal(line, 1)
       },
       onEditorInput: () => {},
@@ -110,28 +92,17 @@ describe('smartEnter', () => {
   })
 
   it('increments numbered list prefix', () => {
-    const calls: Array<{ replacement: string; start: CmPos; end?: CmPos }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 4 }),
-      getLine: () => '1. item',
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-    })
-    smartEnter(cm, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
-    assert.equal(calls[0]!.replacement, '\n2. ')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('1. item', { from: 4 }, actions)
+    smartEnter(view, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
+    assert.equal(replaceAt(actions, 0).replacement, '\n2. ')
   })
 
   it('calls onEditorInput after inserting a new line', () => {
     let called = false
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 14 }),
-      getLine: () => '- [x] done task',
-      replaceRange: () => {},
-    })
-    smartEnter(cm, {
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('- [x] done task', { from: 14 }, actions)
+    smartEnter(view, {
       formatTable: () => assert.fail('should not be called'),
       onEditorInput: () => {
         called = true
@@ -141,232 +112,123 @@ describe('smartEnter', () => {
   })
 
   it('works with * bullet marker', () => {
-    const calls: Array<{ replacement: string; start: CmPos; end?: CmPos }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 14 }),
-      getLine: () => '* [x] done task',
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-    })
-    smartEnter(cm, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
-    assert.equal(calls[0]!.replacement, '\n* [ ] ')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('* [x] done task', { from: 14 }, actions)
+    smartEnter(view, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
+    assert.equal(replaceAt(actions, 0).replacement, '\n* [ ] ')
   })
 
   it('works with + bullet marker', () => {
-    const calls: Array<{ replacement: string; start: CmPos; end?: CmPos }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 14 }),
-      getLine: () => '+ [x] done task',
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-    })
-    smartEnter(cm, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
-    assert.equal(calls[0]!.replacement, '\n+ [ ] ')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('+ [x] done task', { from: 14 }, actions)
+    smartEnter(view, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
+    assert.equal(replaceAt(actions, 0).replacement, '\n+ [ ] ')
   })
 
   it('preserves indentation for nested lists', () => {
-    const calls: Array<{ replacement: string; start: CmPos; end?: CmPos }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 18 }),
-      getLine: () => '  - [x] nested task',
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-    })
-    smartEnter(cm, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
-    assert.equal(calls[0]!.replacement, '\n  - [ ] ')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('  - [x] nested task', { from: 18 }, actions)
+    smartEnter(view, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
+    assert.equal(replaceAt(actions, 0).replacement, '\n  - [ ] ')
   })
 
   it('handles cursor at end of line', () => {
-    const calls: Array<{ replacement: string; start: CmPos; end?: CmPos }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 14 }),
-      getLine: () => '- [x] abcdef',
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-    })
-    smartEnter(cm, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
-    assert.equal(calls[0]!.replacement, '\n- [ ] ')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('- [x] abcdef', { from: 12 }, actions)
+    smartEnter(view, { formatTable: () => assert.fail('should not be called'), onEditorInput: () => {} })
+    assert.equal(replaceAt(actions, 0).replacement, '\n- [ ] ')
   })
 
   it('returns Pass when line has no list prefix', () => {
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 5 }),
-      getLine: () => 'plain text',
-      replaceRange: () => assert.fail('should not be called'),
-    })
-    assert.equal(smartEnter(cm, { formatTable: () => {}, onEditorInput: () => {} }), PASS)
+    const view = makeView('plain text', { from: 5 })
+    assert.equal(smartEnter(view, { formatTable: () => {}, onEditorInput: () => {} }), PASS)
   })
 })
 
 describe('toggleTaskByIndex', () => {
   it('toggles [ ] to [x] at the given index', () => {
-    const calls: Array<{ replacement: string; start: CmPos; end?: CmPos }> = []
-    const cm = makeCm({
-      getValue: () => '- [ ] first\n- [x] second\n- [ ] third',
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-    })
-    toggleTaskByIndex(0, cm, () => {})
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0]!.replacement, '- [x] first')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('- [ ] first\n- [x] second\n- [ ] third', { from: 0 }, actions)
+    toggleTaskByIndex(0, view, () => {})
+    assert.equal(actions.length, 1)
+    assert.equal(replaceAt(actions, 0).replacement, '- [x] first')
   })
 
   it('toggles [x] to [ ] at the given index', () => {
-    const calls: Array<{ replacement: string; start: CmPos; end?: CmPos }> = []
-    const cm = makeCm({
-      getValue: () => '- [ ] first\n- [x] second',
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-    })
-    toggleTaskByIndex(1, cm, () => {})
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0]!.replacement, '- [ ] second')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('- [ ] first\n- [x] second', { from: 0 }, actions)
+    toggleTaskByIndex(1, view, () => {})
+    assert.equal(actions.length, 1)
+    assert.equal(replaceAt(actions, 0).replacement, '- [ ] second')
   })
 
   it('does nothing when idx is out of range', () => {
-    const cm = makeCm({
-      getValue: () => '- [ ] first',
-      replaceRange: () => assert.fail('should not be called'),
-    })
-    toggleTaskByIndex(5, cm, () => {})
+    const view = makeView('- [ ] first', { from: 0 })
+    toggleTaskByIndex(5, view, () => {})
+    assert.equal(view.state.doc.toString(), '- [ ] first')
   })
 
   it('calls onEditorInput after toggling', () => {
     let called = false
-    const cm = makeCm({
-      getValue: () => '- [ ] hello',
-      replaceRange: () => {},
-    })
-    toggleTaskByIndex(0, cm, () => {
+    const view = makeView('- [ ] hello', { from: 0 })
+    toggleTaskByIndex(0, view, () => {
       called = true
     })
     assert.equal(called, true)
   })
 
   it('does nothing when content is empty', () => {
-    const cm = makeCm({
-      getValue: () => '',
-      replaceRange: () => assert.fail('should not be called'),
-    })
-    toggleTaskByIndex(0, cm, () => {})
+    const view = makeView('', { from: 0 })
+    toggleTaskByIndex(0, view, () => assert.fail('should not be called'))
+    assert.equal(view.state.doc.toString(), '')
   })
 
   it('does nothing when no task markers exist', () => {
-    const cm = makeCm({
-      getValue: () => '- plain\n* bullet\n1. numbered',
-      replaceRange: () => assert.fail('should not be called'),
-    })
-    toggleTaskByIndex(0, cm, () => {})
+    const view = makeView('- plain\n* bullet\n1. numbered', { from: 0 })
+    toggleTaskByIndex(0, view, () => assert.fail('should not be called'))
+    assert.equal(view.state.doc.toString(), '- plain\n* bullet\n1. numbered')
   })
 
   it('toggles the second task in mixed content', () => {
-    const calls: Array<{ replacement: string; start: CmPos; end?: CmPos }> = []
-    const cm = makeCm({
-      getValue: () => 'some text\n- [ ] first\n- [x] second\n\nmore text',
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-    })
-    toggleTaskByIndex(1, cm, () => {})
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0]!.replacement, '- [ ] second')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('some text\n- [ ] first\n- [x] second\n\nmore text', { from: 0 }, actions)
+    toggleTaskByIndex(1, view, () => {})
+    assert.equal(actions.length, 1)
+    assert.equal(replaceAt(actions, 0).replacement, '- [ ] second')
   })
 })
 
 describe('formatTable', () => {
   it('inserts a new empty row below the table', () => {
-    let setValueCalled = false
-    const cm = makeCm({
-      getValue: () => '| a | b |\n| c | d |',
-      setValue(val) {
-        setValueCalled = true
-        const lines = val.split('\n')
-        assert.equal(lines.length, 3)
-        assert.match(lines[2]!, /^\| .+ \| .+ \|$/)
-      },
-      setCursor: () => {},
-      replaceRange: () => {},
-    })
-    formatTable(cm, 1, () => {})
-    assert.equal(setValueCalled, true)
+    const view = makeView('| a | b |\n| c | d |', { from: 4 })
+    formatTable(view, 1, () => {})
+    assert.equal(view.state.doc.lines, 3)
+    assert.match(view.state.doc.line(3).text, /^\| .+ \| .+ \|$/)
   })
 
   it('inserts plain newline when table has fewer than 2 columns', () => {
-    const calls: Array<{
-      type?: string
-      pos?: CmPos
-      replacement?: string
-      start?: CmPos
-      end?: CmPos
-    }> = []
-    const cm = makeCm({
-      getValue: () => '| single |',
-      setValue: () => assert.fail('should not be called'),
-      setCursor(pos) {
-        calls.push({ type: 'setCursor', pos })
-      },
-      replaceRange(replacement, start, end) {
-        const args: { type: string; replacement: string; start: CmPos; end?: CmPos } = {
-          type: 'replaceRange',
-          replacement,
-          start,
-        }
-        if (end) args.end = end
-        calls.push(args)
-      },
-    })
-    formatTable(cm, 0, () => {})
-    assert.equal(calls.length, 2)
-    assert.equal(calls[0]!.replacement, '\n')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('| single |', { from: 0 }, actions)
+    formatTable(view, 0, () => {})
+    assert.equal(actions.length, 2)
+    assert.equal(replaceAt(actions, 0).replacement, '\n')
+    assert.deepEqual(cursorAt(actions, 1), { line: 1, ch: 0 })
   })
 
   it('inserts row after the last table line, not at cursor line', () => {
-    let setValueCalled = false
-    const cm = makeCm({
-      getValue: () => '| h1 | h2 |\n| --- | --- |\n| d1 | d2 |',
-      setValue(val) {
-        setValueCalled = true
-        const lines = val.split('\n')
-        assert.equal(lines.length, 4)
-      },
-      setCursor(pos) {
-        assert.deepEqual(pos, { line: 3, ch: 1 })
-      },
-      replaceRange: () => {},
-    })
-    formatTable(cm, 0, () => {})
-    assert.equal(setValueCalled, true)
+    const view = makeView('| h1 | h2 |\n| --- | --- |\n| d1 | d2 |', { from: 0 })
+    formatTable(view, 0, () => {})
+    assert.equal(view.state.doc.lines, 4)
+    const head = view.state.selection.main.head
+    const line = view.state.doc.lineAt(head)
+    assert.equal(line.number - 1, 3)
+    assert.equal(head - line.from, 1)
   })
 
   it('calls onEditorInput after inserting row', () => {
     let called = false
-    const cm = makeCm({
-      getValue: () => '| a | b |',
-      setValue: () => {},
-      setCursor: () => {},
-      replaceRange: () => {},
-    })
-    formatTable(cm, 0, () => {
+    const view = makeView('| a | b |', { from: 0 })
+    formatTable(view, 0, () => {
       called = true
     })
     assert.equal(called, true)
@@ -375,406 +237,241 @@ describe('formatTable', () => {
 
 describe('moveInTable', () => {
   it('moves to the next cell on a table row', () => {
-    const calls: Array<{ line: number; ch: number }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 3 }),
-      getLine: () => '| a | b | c |',
-      setCursor(pos) {
-        calls.push(pos as { line: number; ch: number })
-      },
-    })
-    const result = moveInTable(cm, false)
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('| a | b | c |', { from: 3 }, actions)
+    const result = moveInTable(view, false)
     assert.equal(result, true)
-    assert.equal(calls.length, 1)
-    assert(calls[0]!.ch > 3)
+    assert.equal(actions.length, 1)
+    assert.ok(cursorAt(actions, 0).ch > 3)
   })
 
   it('moves to the previous cell on shift', () => {
-    const calls: Array<{ line: number; ch: number }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 8 }),
-      getLine: () => '| a | b | c |',
-      setCursor(pos) {
-        calls.push(pos as { line: number; ch: number })
-      },
-    })
-    const result = moveInTable(cm, true)
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('| a | b | c |', { from: 8 }, actions)
+    const result = moveInTable(view, true)
     assert.equal(result, true)
-    assert.equal(calls.length, 1)
-    assert(calls[0]!.ch < 8)
+    assert.equal(actions.length, 1)
+    assert.ok(cursorAt(actions, 0).ch < 8)
   })
 
   it('returns false when not on a table row', () => {
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 0 }),
-      getLine: () => '- not a table',
-      setCursor: () => assert.fail('should not be called'),
-    })
-    assert.equal(moveInTable(cm, false), false)
+    const view = makeView('- not a table', { from: 0 })
+    assert.equal(moveInTable(view, false), false)
   })
 
   it('returns false when cursor is at the first cell and moving left', () => {
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 1 }),
-      getLine: () => '| a | b |',
-      setCursor: () => assert.fail('should not be called'),
-    })
-    assert.equal(moveInTable(cm, true), false)
+    const view = makeView('| a | b |', { from: 1 })
+    assert.equal(moveInTable(view, true), false)
   })
 
   it('returns false when at the last cell and moving right', () => {
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 10 }),
-      getLine: () => '| a | b |',
-      setCursor: () => assert.fail('should not be called'),
-    })
-    assert.equal(moveInTable(cm, false), false)
+    const view = makeView('| a | b |', { from: 9 })
+    assert.equal(moveInTable(view, false), false)
   })
 
   it('returns false for a single-cell table row', () => {
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 5 }),
-      getLine: () => '| only |',
-      setCursor: () => assert.fail('should not be called'),
-    })
-    assert.equal(moveInTable(cm, false), false)
+    const view = makeView('| only |', { from: 5 })
+    assert.equal(moveInTable(view, false), false)
   })
 
   it('tabs through each cell of an empty 4-column row without skipping', () => {
     const line = '|   |   |   |   |'
-    const calls: Array<{ line: number; ch: number }> = []
-    function tabFrom(ch: number) {
-      const cm = makeCm({
-        getCursor: () => ({ line: 0, ch }),
-        getLine: () => line,
-        setCursor(pos) {
-          calls.push(pos as { line: number; ch: number })
-        },
-      })
-      return moveInTable(cm, false)
+    const runs: Array<{ from: number; expect: number | null }> = [
+      { from: 1, expect: 5 },
+      { from: 5, expect: 9 },
+      { from: 9, expect: 13 },
+      { from: 13, expect: null },
+    ]
+    for (const run of runs) {
+      const actions: EditorAction[] = []
+      const view = makeRecordingView(line, { from: run.from }, actions)
+      const result = moveInTable(view, false)
+      if (run.expect === null) {
+        assert.equal(result, false)
+      } else {
+        assert.equal(result, true)
+        assert.equal(cursorAt(actions, 0).ch, run.expect)
+      }
     }
-    // Tab from cell 0 → cell 1 (not cell 2)
-    assert.equal(tabFrom(1), true)
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0]!.ch, 5)
-    // Tab from cell 1 → cell 2
-    assert.equal(tabFrom(5), true)
-    assert.equal(calls.length, 2)
-    assert.equal(calls[1]!.ch, 9)
-    // Tab from cell 2 → cell 3
-    assert.equal(tabFrom(9), true)
-    assert.equal(calls.length, 3)
-    assert.equal(calls[2]!.ch, 13)
-    // Tab from cell 3 → false (last cell)
-    assert.equal(tabFrom(13), false)
   })
 })
 
 describe('handleTab / handleShiftTab', () => {
   it('handleTab calls moveInTable then falls back to insertSoftTab', () => {
-    let softTabCalled = false
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 0 }),
-      getLine: () => '- list item',
-      setCursor: () => assert.fail('should not be called'),
-      execCommand(cmd) {
-        if (cmd === 'insertSoftTab') softTabCalled = true
-      },
-    })
-    handleTab(cm)
-    assert.equal(softTabCalled, true)
+    const view = makeView('- list item', { from: 0 })
+    handleTab(view)
+    assert.equal(view.state.doc.toString(), '  - list item')
   })
 
   it('handleTab moves in table when on a table row', () => {
-    const calls: Array<{ line: number; ch: number }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 3 }),
-      getLine: () => '| a | b |',
-      setCursor(pos) {
-        calls.push(pos as { line: number; ch: number })
-      },
-      execCommand: () => assert.fail('should not be called'),
-    })
-    handleTab(cm)
-    assert.equal(calls.length, 1)
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('| a | b |', { from: 3 }, actions)
+    handleTab(view)
+    assert.equal(actions.length, 1)
+    assert.equal(actions[0]!.type, 'cursor')
   })
 
   it('handleShiftTab returns Pass when not in table', () => {
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 0 }),
-      getLine: () => '- list item',
-      setCursor: () => assert.fail('should not be called'),
-    })
-    assert.equal(handleShiftTab(cm), PASS)
+    const view = makeView('- list item', { from: 0 })
+    assert.equal(handleShiftTab(view), PASS)
   })
 })
 
 describe('toggleTaskOnLine', () => {
   it('toggles [ ] to [x] on the current line', () => {
-    const calls: Array<{ replacement: string; start: CmPos; end?: CmPos }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 3 }),
-      getLine: () => '- [ ] todo',
-      focus: () => {},
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-      setCursor: () => assert.fail('should not be called'),
-    })
-    toggleTaskOnLine(cm, makeNote({ name: 'file.md' }), () => {})
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0]!.replacement, '- [x] todo')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('- [ ] todo', { from: 3 }, actions)
+    toggleTaskOnLine(view, makeNote({ name: 'file.md' }), () => {})
+    assert.equal(actions.length, 1)
+    assert.equal(replaceAt(actions, 0).replacement, '- [x] todo')
   })
 
   it('toggles [x] to [ ] on the current line', () => {
-    const calls: Array<{ replacement: string; start: CmPos; end?: CmPos }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 3 }),
-      getLine: () => '- [x] done',
-      focus: () => {},
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-      setCursor: () => assert.fail('should not be called'),
-    })
-    toggleTaskOnLine(cm, makeNote({ name: 'file.md' }), () => {})
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0]!.replacement, '- [ ] done')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('- [x] done', { from: 3 }, actions)
+    toggleTaskOnLine(view, makeNote({ name: 'file.md' }), () => {})
+    assert.equal(actions.length, 1)
+    assert.equal(replaceAt(actions, 0).replacement, '- [ ] done')
   })
 
   it('inserts - [ ] when line has no task marker', () => {
-    const calls: Array<{
-      type?: string
-      replacement?: string
-      start?: CmPos
-      end?: CmPos
-      pos?: CmPos
-    }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 5 }),
-      getLine: () => 'plain text',
-      focus: () => {},
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-      setCursor(pos) {
-        calls.push({ type: 'setCursor', pos })
-      },
-    })
-    toggleTaskOnLine(cm, makeNote({ name: 'file.md' }), () => {})
-    assert.equal(calls.length, 2)
-    assert.equal(calls[0]!.replacement, '- [ ] ')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('plain text', { from: 5 }, actions)
+    toggleTaskOnLine(view, makeNote({ name: 'file.md' }), () => {})
+    assert.equal(actions.length, 2)
+    assert.equal(replaceAt(actions, 0).replacement, '- [ ] ')
+    assert.deepEqual(cursorAt(actions, 1), { line: 0, ch: 6 })
   })
 
   it('does nothing when currentFile is null', () => {
-    const cm = makeCm({
-      getCursor: () => assert.fail('should not be called'),
-    })
-    toggleTaskOnLine(cm, null, () => {})
+    const view = makeView('- [ ] todo', { from: 3 })
+    toggleTaskOnLine(view, null, () => assert.fail('should not be called'))
+    assert.equal(view.state.doc.toString(), '- [ ] todo')
   })
 
   it('calls onEditorInput after toggling', () => {
     let called = false
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 3 }),
-      getLine: () => '- [ ] todo',
-      focus: () => {},
-      replaceRange: () => {},
-    })
-    toggleTaskOnLine(cm, makeNote({ name: 'file.md' }), () => {
+    const view = makeView('- [ ] todo', { from: 3 })
+    toggleTaskOnLine(view, makeNote({ name: 'file.md' }), () => {
       called = true
     })
     assert.equal(called, true)
   })
 
   it('works with * bullet marker', () => {
-    const calls: Array<{ replacement: string; start: CmPos; end?: CmPos }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 3 }),
-      getLine: () => '* [ ] task',
-      focus: () => {},
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-      setCursor: () => assert.fail('should not be called'),
-    })
-    toggleTaskOnLine(cm, makeNote({ name: 'file.md' }), () => {})
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0]!.replacement, '* [x] task')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('* [ ] task', { from: 3 }, actions)
+    toggleTaskOnLine(view, makeNote({ name: 'file.md' }), () => {})
+    assert.equal(actions.length, 1)
+    assert.equal(replaceAt(actions, 0).replacement, '* [x] task')
   })
 
   it('preserves leading whitespace when inserting new task', () => {
-    const calls: Array<{
-      type?: string
-      replacement?: string
-      start?: CmPos
-      end?: CmPos
-      pos?: CmPos
-    }> = []
-    const cm = makeCm({
-      getCursor: () => ({ line: 0, ch: 8 }),
-      getLine: () => '  plain text',
-      focus: () => {},
-      replaceRange(replacement, start, end) {
-        const args: { replacement: string; start: CmPos; end?: CmPos } = { replacement, start }
-        if (end) args.end = end
-        calls.push(args)
-      },
-      setCursor(pos) {
-        calls.push({ type: 'setCursor', pos })
-      },
-    })
-    toggleTaskOnLine(cm, makeNote({ name: 'file.md' }), () => {})
-    assert.equal(calls[0]!.replacement, '- [ ] ')
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('  plain text', { from: 8 }, actions)
+    toggleTaskOnLine(view, makeNote({ name: 'file.md' }), () => {})
+    assert.equal(replaceAt(actions, 0).replacement, '- [ ] ')
   })
 })
 
 describe('insertMarkdown', () => {
   it('wraps selection with markdown syntax', () => {
-    const cm = makeCm({
-      getSelection: () => 'selected text',
-      getCursor: () => ({ line: 0, ch: 0 }),
-      replaceSelection(val) {
-        assert.equal(val, '**selected text**')
-      },
-      focus: () => {},
-    })
-    insertMarkdown('**', '**', cm, () => {})
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('selected text', { from: 0, to: 13 }, actions)
+    insertMarkdown('**', '**', view, () => {})
+    assert.equal(replaceAt(actions, 0).replacement, '**selected text**')
   })
 
   it('inserts prefix at cursor when nothing selected', () => {
-    let setCursorCalled = false
-    const cm = makeCm({
-      getSelection: () => '',
-      getCursor: _type => ({ line: 0, ch: 5 }),
-      replaceSelection(val) {
-        assert.equal(val, '# ')
-      },
-      setCursor(pos) {
-        setCursorCalled = true
-        assert.deepEqual(pos, { line: 0, ch: 7 })
-      },
-      focus: () => {},
-    })
-    insertMarkdown('# ', '', cm, () => {})
-    assert.equal(setCursorCalled, true)
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('abcde', { from: 5 }, actions)
+    insertMarkdown('# ', '', view, () => {})
+    assert.equal(replaceAt(actions, 0).replacement, '# ')
+    assert.deepEqual(cursorAt(actions, 1), { line: 0, ch: 7 })
   })
 
   it('calls onEditorInput after inserting', () => {
     let called = false
-    const cm = makeCm({
-      getSelection: () => '',
-      getCursor: () => ({ line: 0, ch: 0 }),
-      replaceSelection: () => {},
-      setCursor: () => {},
-      focus: () => {},
-    })
-    insertMarkdown('**', '**', cm, () => {
+    const view = makeView('', { from: 0 })
+    insertMarkdown('**', '**', view, () => {
       called = true
     })
     assert.equal(called, true)
   })
 
   it('wraps with bold syntax', () => {
-    const cm = makeCm({
-      getSelection: () => 'word',
-      getCursor: () => ({ line: 0, ch: 0 }),
-      replaceSelection(val) {
-        assert.equal(val, '**word**')
-      },
-      focus: () => {},
-    })
-    insertMarkdown('**', '**', cm, () => {})
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('word', { from: 0, to: 4 }, actions)
+    insertMarkdown('**', '**', view, () => {})
+    assert.equal(replaceAt(actions, 0).replacement, '**word**')
   })
 
   it('wraps with italic syntax', () => {
-    const cm = makeCm({
-      getSelection: () => 'word',
-      getCursor: () => ({ line: 0, ch: 0 }),
-      replaceSelection(val) {
-        assert.equal(val, '*word*')
-      },
-      focus: () => {},
-    })
-    insertMarkdown('*', '*', cm, () => {})
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('word', { from: 0, to: 4 }, actions)
+    insertMarkdown('*', '*', view, () => {})
+    assert.equal(replaceAt(actions, 0).replacement, '*word*')
   })
 
   it('inserts heading prefix', () => {
-    const cm = makeCm({
-      getSelection: () => '',
-      getCursor: () => ({ line: 0, ch: 0 }),
-      replaceSelection(val) {
-        assert.equal(val, '### ')
-      },
-      setCursor(pos) {
-        assert.deepEqual(pos, { line: 0, ch: 4 })
-      },
-      focus: () => {},
-    })
-    insertMarkdown('### ', '', cm, () => {})
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('', { from: 0 }, actions)
+    insertMarkdown('### ', '', view, () => {})
+    assert.equal(replaceAt(actions, 0).replacement, '### ')
+    assert.deepEqual(cursorAt(actions, 1), { line: 0, ch: 4 })
   })
 
   it('wraps with link syntax', () => {
-    const cm = makeCm({
-      getSelection: () => 'text',
-      getCursor: () => ({ line: 0, ch: 0 }),
-      replaceSelection(val) {
-        assert.equal(val, '[text](url)')
-      },
-      focus: () => {},
-    })
-    insertMarkdown('[', '](url)', cm, () => {})
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('text', { from: 0, to: 4 }, actions)
+    insertMarkdown('[', '](url)', view, () => {})
+    assert.equal(replaceAt(actions, 0).replacement, '[text](url)')
   })
 
   it('wraps with code block syntax', () => {
-    const cm = makeCm({
-      getSelection: () => 'code',
-      getCursor: () => ({ line: 0, ch: 0 }),
-      replaceSelection(val) {
-        assert.equal(val, '```\ncode\n```')
-      },
-      focus: () => {},
-    })
-    insertMarkdown('```\n', '\n```', cm, () => {})
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('code', { from: 0, to: 4 }, actions)
+    insertMarkdown('```\n', '\n```', view, () => {})
+    assert.equal(replaceAt(actions, 0).replacement, '```\ncode\n```')
   })
 })
 
 describe('insertTimestamp', () => {
   it('inserts YYYY-MM-DD format via insertMarkdown', () => {
-    let calledWith: string | null = null
-    const cm = makeCm({
-      getSelection: () => '',
-      getCursor: () => ({ line: 0, ch: 0 }),
-      replaceSelection(val) {
-        calledWith = val
-      },
-      setCursor: () => {},
-      focus: () => {},
-    })
-    insertTimestamp(cm, () => {})
-    assert.match(calledWith!, /^\d{4}-\d{2}-\d{2}$/)
+    const actions: EditorAction[] = []
+    const view = makeRecordingView('', { from: 0 }, actions)
+    insertTimestamp(view, () => {})
+    assert.match(replaceAt(actions, 0).replacement, /^\d{4}-\d{2}-\d{2}$/)
   })
 
   it('calls onEditorInput after inserting', () => {
     let called = false
-    const cm = makeCm({
-      getSelection: () => '',
-      getCursor: () => ({ line: 0, ch: 0 }),
-      replaceSelection: () => {},
-      setCursor: () => {},
-      focus: () => {},
-    })
-    insertTimestamp(cm, () => {
+    const view = makeView('', { from: 0 })
+    insertTimestamp(view, () => {
       called = true
     })
     assert.equal(called, true)
+  })
+})
+
+describe('toggleTaskByIndex fallback', () => {
+  it('falls back to the textarea when view is null', () => {
+    let textarea: HTMLTextAreaElement | null = null
+    const single = globalThis.document
+    try {
+      globalThis.document = {
+        getElementById(id: string) {
+          if (id === 'editorContent') {
+            textarea = { value: '- [ ] via textarea', dispatchEvent() {} } as unknown as HTMLTextAreaElement
+            return textarea
+          }
+          return null
+        },
+      } as unknown as Document
+      toggleTaskByIndex(0, null, () => {})
+      assert.equal(textarea!.value, '- [x] via textarea')
+    } finally {
+      if (single) globalThis.document = single
+    }
   })
 })

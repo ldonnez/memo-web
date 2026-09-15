@@ -38,11 +38,12 @@ import { htmlLanguage } from '@codemirror/lang-html'
 import { sql } from '@codemirror/lang-sql'
 import { parser as bashParser } from '@fig/lezer-bash'
 import { tags } from '@lezer/highlight'
-import type { CmAdapter, CmPos } from './types.ts'
 
-const tabSize = 2
+export const tabSize = 2
 
 let markSeq = 0
+let themeCompartment: Compartment
+let historyCompartment: Compartment
 
 export const addMarkEffect = StateEffect.define<MarkData[]>()
 export const clearAllMarksEffect = StateEffect.define<void>()
@@ -151,7 +152,7 @@ const latteHighlightStyle = HighlightStyle.define([
   { tag: tags.name, color: '#04a5e5' },
 ])
 
-type ThemeName = 'latte' | 'frappe'
+export type ThemeName = 'latte' | 'frappe'
 
 function getTheme(themeName: ThemeName): Extension[] {
   if (themeName === 'latte') {
@@ -182,17 +183,82 @@ function codeLanguages(info: string): Language | null {
   return map[info] || null
 }
 
+// ── Position helpers ──
+
 // A position may be a CM6 integer offset or a CM5-style {line, ch} object (0-based line)
-function toOffset(view: EditorView, pos: CmPos): number {
+export function toOffset(view: EditorView, pos: number | { line: number; ch: number }): number {
   if (typeof pos === 'number') return pos
   const n = Math.min(pos.line, view.state.doc.lines - 1)
   const line = view.state.doc.line(n + 1)
   return line.from + Math.min(pos.ch, line.length)
 }
 
-function offsetToDocPos(view: EditorView, offset: number): { line: number; ch: number } {
+export function offsetToDocPos(view: EditorView, offset: number): { line: number; ch: number } {
   const line = view.state.doc.lineAt(offset)
   return { line: line.number - 1, ch: offset - line.from }
+}
+
+// ── View-level ops (compartments live at module scope, set up in createEditor) ──
+
+export function setTheme(view: EditorView, name: ThemeName): void {
+  view.dispatch({ effects: themeCompartment.reconfigure(getTheme(name)) })
+}
+
+export function clearHistory(view: EditorView): void {
+  view.dispatch({ effects: historyCompartment.reconfigure(history()) })
+}
+
+export function replaceDoc(view: EditorView, text: string): void {
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } })
+}
+
+export function setCursor(view: EditorView, pos: number | { line: number; ch: number }, scroll?: boolean): void {
+  const dispatchOpts = scroll === false ? {} : { scrollIntoView: true }
+  view.dispatch({ selection: { anchor: toOffset(view, pos) }, ...dispatchOpts })
+}
+
+export function setSelection(view: EditorView, from: number, to: number): void {
+  view.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true })
+}
+
+export function replaceRange(view: EditorView, text: string, from: number, to?: number): void {
+  view.dispatch({
+    changes: {
+      from,
+      ...(to !== undefined ? { to } : {}),
+      insert: text,
+    },
+  })
+}
+
+export function insertSoftTab(view: EditorView): void {
+  const { head } = view.state.selection.main
+  const line = view.state.doc.lineAt(head)
+  const col = head - line.from
+  const spaces = tabSize - (col % tabSize)
+  view.dispatch({ changes: { from: head, insert: ' '.repeat(spaces) } })
+}
+
+export interface CmMark {
+  clear: () => void
+}
+
+export function addMark(view: EditorView, from: number, to: number, className?: string): CmMark {
+  const id = ++markSeq
+  view.dispatch({
+    effects: addMarkEffect.of([{ id, from, to, className: className || '' }]),
+  })
+  return { clear: () => view.dispatch({ effects: removeMarksEffect.of([id]) }) }
+}
+
+export function clearAllMarks(view: EditorView): void {
+  view.dispatch({ effects: clearAllMarksEffect.of() })
+}
+
+export function getAllMarks(view: EditorView): CmMark[] {
+  return view.state.field(markField).marks.map(m => ({
+    clear: () => view.dispatch({ effects: removeMarksEffect.of([m.id]) }),
+  }))
 }
 
 export interface CreateEditorOptions {
@@ -203,29 +269,22 @@ export interface CreateEditorOptions {
   keymapBindings?: KeyBinding[]
 }
 
-// ── Editor adapter (CM5-compatible surface over a CM6 EditorView) ──
 export function createEditor({
   parent,
   initialValue,
   onChange,
   themeName,
   keymapBindings,
-}: CreateEditorOptions): CmAdapter {
-  const themeCompartment = new Compartment()
-  const historyCompartment = new Compartment()
-
-  const setTheme = (name: ThemeName): Extension[] => getTheme(name)
-
-  const clearHistory = (): void => {
-    view.dispatch({ effects: historyCompartment.reconfigure(history()) })
-  }
+}: CreateEditorOptions): EditorView {
+  themeCompartment = new Compartment()
+  historyCompartment = new Compartment()
 
   const extensions: Extension[] = [
     drawSelection(),
     dropCursor(),
     indentOnInput(),
     bracketMatching(),
-    themeCompartment.of(setTheme(themeName || 'frappe')),
+    themeCompartment.of(getTheme(themeName || 'frappe')),
     historyCompartment.of(history()),
     markdown({
       base: markdownLanguage,
@@ -245,82 +304,5 @@ export function createEditor({
     doc: initialValue || '',
     extensions,
   })
-  const view = new EditorView({ state, parent })
-
-  return {
-    view,
-    getValue: () => view.state.doc.toString(),
-    setValue: (val: string) => {
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: val } })
-      clearHistory()
-    },
-    clearHistory,
-    getSelection: () => view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to),
-    replaceSelection: (text: string) => view.dispatch(view.state.replaceSelection(text)),
-    getCursor: (type?: 'from' | 'to' | 'head') => {
-      const sel = view.state.selection.main
-      const pos = type === 'from' ? sel.from : type === 'to' ? sel.to : sel.head
-      return offsetToDocPos(view, pos)
-    },
-    setCursor: (pos: CmPos, ch?: number, opts?: { scroll?: boolean }) => {
-      const p =
-        typeof pos === 'number' && typeof ch === 'number' ? toOffset(view, { line: pos, ch }) : toOffset(view, pos)
-      const dispatchOpts = opts && opts.scroll === false ? {} : { scrollIntoView: true }
-      view.dispatch({ selection: { anchor: p }, ...dispatchOpts })
-    },
-    getLine: (n: number) => view.state.doc.line(n + 1).text,
-    replaceRange: (text: string, from: CmPos, to?: CmPos) =>
-      view.dispatch({
-        changes: {
-          from: toOffset(view, from),
-          ...(to ? { to: toOffset(view, to) } : {}),
-          insert: text,
-        },
-      }),
-    setSelection: (from: CmPos, to: CmPos) =>
-      view.dispatch({
-        selection: { anchor: toOffset(view, from), head: toOffset(view, to) },
-        scrollIntoView: true,
-      }),
-    posFromIndex: (i: number) => i,
-    indexFromPos: (pos: CmPos) => toOffset(view, pos),
-    focus: () => view.focus(),
-    scrollIntoView: (pos: CmPos, margin?: number) =>
-      view.dispatch({
-        effects: EditorView.scrollIntoView(toOffset(view, pos), { y: 'nearest', yMargin: margin || 0 }),
-      }),
-    scrollTo: (left: number, top: number) => {
-      view.scrollDOM.scrollLeft = left
-      view.scrollDOM.scrollTop = top
-    },
-    getScrollInfo: () => {
-      const dom = view.scrollDOM
-      return { top: dom.scrollTop, left: dom.scrollLeft, height: dom.clientHeight, width: dom.clientWidth }
-    },
-    setOption: (_name: string, value: string) =>
-      view.dispatch({ effects: themeCompartment.reconfigure(setTheme(value as ThemeName)) }),
-    refresh: () => view.requestMeasure(),
-    execCommand: (cmd: string) => {
-      if (cmd === 'insertSoftTab') {
-        const { head } = view.state.selection.main
-        const line = view.state.doc.lineAt(head)
-        const col = head - line.from
-        const spaces = tabSize - (col % tabSize)
-        view.dispatch({ changes: { from: head, insert: ' '.repeat(spaces) } })
-      }
-    },
-    markText: (from: CmPos, to: CmPos, opts?: { className?: string }) => {
-      const id = ++markSeq
-      view.dispatch({
-        effects: addMarkEffect.of([
-          { id, from: toOffset(view, from), to: toOffset(view, to), className: (opts && opts.className) || '' },
-        ]),
-      })
-      return { clear: () => view.dispatch({ effects: removeMarksEffect.of([id]) }) }
-    },
-    getAllMarks: () =>
-      view.state.field(markField).marks.map(m => ({
-        clear: () => view.dispatch({ effects: removeMarksEffect.of([m.id]) }),
-      })),
-  }
+  return new EditorView({ state, parent })
 }
