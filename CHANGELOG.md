@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/ldonnez/memo-web/compare/v0.6.1...v0.7.0) (2026-09-15)
+
+
+### Features
+
+* heading button now adds single header ([8b88fe2](https://github.com/ldonnez/memo-web/commit/8b88fe21ca4d2c3d20b6a3f8a1ba2d59caee58e5))
+
 ## [0.6.1](https://github.com/ldonnez/memo-web/compare/v0.6.0...v0.6.1) (2026-09-14)
 
 
