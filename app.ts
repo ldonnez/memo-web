@@ -1523,7 +1523,7 @@ function bindEvents() {
   // Editor toolbar
   byId('boldBtn')?.addEventListener('click', () => insertMarkdown('**', '**', cm, onEditorInput))
   byId('italicBtn')?.addEventListener('click', () => insertMarkdown('*', '*', cm, onEditorInput))
-  byId('headingBtn')?.addEventListener('click', () => insertMarkdown('### ', '', cm, onEditorInput))
+  byId('headingBtn')?.addEventListener('click', () => insertMarkdown('#', '', cm, onEditorInput))
   byId('bulletBtn')?.addEventListener('click', () => insertMarkdown('- ', '', cm, onEditorInput))
   byId('taskBtn')?.addEventListener('click', () => toggleTaskOnLine(cm, state.currentFile, onEditorInput))
   byId('linkBtn')?.addEventListener('click', () => insertMarkdown('[', '](url)', cm, onEditorInput))
