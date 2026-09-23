@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/ldonnez/memo-web/compare/v0.7.0...v0.7.1) (2026-09-23)
+
+
+### Miscellaneous Chores
+
+* **deps:** bump the dev-dependencies group across 1 directory with 3 updates ([6ea5979](https://github.com/ldonnez/memo-web/commit/6ea59790695f402e5de25d7bb9c6ce772e0a422f))
+
 ## [0.7.0](https://github.com/ldonnez/memo-web/compare/v0.6.1...v0.7.0) (2026-09-15)
 
 
