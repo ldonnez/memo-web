@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.2](https://github.com/ldonnez/memo-web/compare/v0.7.1...v0.7.2) (2026-09-26)
+
+
+### Miscellaneous Chores
+
+* **main:** release 0.7.2 ([c6615eb](https://github.com/ldonnez/memo-web/commit/c6615eb9b81f49e609d8ef3a68e8840d4b70e985))
+
 ## [0.7.1](https://github.com/ldonnez/memo-web/compare/v0.7.0...v0.7.1) (2026-09-23)
 
 
