@@ -7,6 +7,11 @@ on:
     types:
       - completed
   workflow_dispatch:
+    inputs:
+      release_as:
+        description: 'Version to release'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -26,3 +31,4 @@ jobs:
           token: ${{ secrets.GH_PAT_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          release-as: ${{ inputs.release_as }}
