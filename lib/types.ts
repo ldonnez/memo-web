@@ -35,6 +35,16 @@ export interface Note {
   content: string | null
   decrypted?: string | null
   originalText?: string
+  /**
+   * Merge base: the decrypted text of the last content known to exist on the
+   * remote. `baseSha` is the blob SHA that `baseText` was decrypted from, so a
+   * single string compare answers "has the remote moved past what we synced?".
+   * `null` means the base is unknown (never opened on this device, or written
+   * by a build from before the base was tracked) — the pull decision then has
+   * nothing to merge against and must not silently overwrite local work.
+   */
+  baseText?: string | null
+  baseSha?: string | null
 }
 
 export interface GhFileEntry {

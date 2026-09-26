@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { markNoteClean, saveNoteClean, reconcileSha, decideRemoteRefresh, applyRemoteContent } from '../lib/util.ts'
+import { markNoteClean, saveNoteClean, reconcileSha, applyRemoteContent } from '../lib/util.ts'
+import { planPull, baseOf } from '../lib/sync.ts'
 import { makeNote } from './helpers.ts'
 import type { Note } from '../lib/types.ts'
 
@@ -82,24 +83,36 @@ describe('the cache handoff after a save', () => {
 })
 
 // =====================================================================
-// Half 2: refreshOpenNoteContent's skip branch must reconcile a stale SHA
-// even when the content already matches the remote.
+// Half 2: a cache record whose SHA is behind the remote must be repaired on
+// refresh, or the next save 409-conflicts against the user's own last write.
+//
+// With the merge base in place this is no longer a separate special case: a
+// stale SHA means base.sha !== remoteSha, which is an ordinary fast-forward
+// and goes through applyRemoteContent (SHA + base + content together).
+// reconcileSha stays as the repair for the up-to-date branch.
 // =====================================================================
 
-describe('decideRemoteRefresh — skip still needs SHA reconciliation', () => {
-  it('returns skip when remote content equals local content', () => {
-    const note = makeStaleNote()
-    const decision = decideRemoteRefresh(note, false, false, 'b64-old', 'sha-remote')
-    assert.equal(decision.action, 'skip', 'content unchanged → skip')
+describe('a stale cache SHA is repaired by the refresh', () => {
+  it('a SHA behind the remote is an ordinary pull, not a silent skip', () => {
+    const note = makeStaleNote({ baseSha: 'sha-old', sha: 'sha-old' })
+    assert.equal(planPull({ base: baseOf(note), remoteSha: 'sha-remote', working: null }), 'apply')
   })
 
-  it('skip carries no SHA — so the caller must reconcile separately (the repro)', () => {
-    const note = makeStaleNote()
-    const decision = decideRemoteRefresh(note, false, false, 'b64-old', 'sha-remote')
-    assert.equal(decision.action, 'skip')
-    // OLD app.ts skip branch just returned; note.sha stayed 'sha-old' while the
-    // remote is 'sha-remote' → next save conflicts.
-    assert.equal(note.sha, 'sha-old', 'note SHA was never reconciled by the old skip branch')
+  it('up-to-date carries no SHA, so the caller must reconcile separately (the repro)', () => {
+    const note = makeStaleNote({ baseSha: 'sha-remote', sha: 'sha-old' })
+    assert.equal(planPull({ base: baseOf(note), remoteSha: 'sha-remote', working: null }), 'up-to-date')
+    // The up-to-date branch performs no apply, so note.sha stays 'sha-old' while
+    // the remote is 'sha-remote' → the next save would conflict.
+    assert.equal(note.sha, 'sha-old', 'note SHA is not touched by the up-to-date branch')
+  })
+
+  it('a legacy record with no base at all is fast-forwarded (SHA repaired)', () => {
+    // Cached by a pre-merge-base build: content is right, base is unknown.
+    const note = makeStaleNote({ content: 'b64-old' })
+    assert.equal(planPull({ base: baseOf(note), remoteSha: 'sha-remote', working: null }), 'apply')
+    const repaired = applyRemoteContent(note, [note], 'b64-old', 'same text', 'sha-remote')
+    assert.equal(repaired.currentFile.sha, 'sha-remote', 'SHA repaired')
+    assert.deepEqual(baseOf(repaired.currentFile), { text: 'same text', sha: 'sha-remote' }, 'base established')
   })
 })
 
@@ -149,35 +162,35 @@ describe('full round-trip — save → cache → reload → refresh → save', (
     // Session B: reload from cache, open the note → SHA is already correct
     assert.equal(cached.sha, 'sha-v2', 'reloaded note has the correct SHA')
 
-    // Session B: background refresh — content matches → skip, and the SHA is
-    // already in sync so reconcileSha is a no-op
-    const decision = decideRemoteRefresh(cached, false, false, 'b64-v2', 'sha-v2')
-    assert.equal(decision.action, 'skip')
+    // Session B: background refresh — base SHA matches the remote → up-to-date,
+    // and the SHA is already in sync so reconcileSha is a no-op
+    assert.equal(planPull({ base: baseOf(cached), remoteSha: 'sha-v2', working: null }), 'up-to-date')
     const reconciled = reconcileSha(cached, afterSave.notes, 'sha-v2')
     assert.equal(reconciled, null, 'no reconciliation needed — SHA already correct')
 
     // Session B: user saves → sends sha-v2 → GitHub has sha-v2 → no conflict
     assert.equal(cached.sha, 'sha-v2', 'save uses the correct SHA — no false conflict')
+    assert.deepEqual(baseOf(cached), { text: 'saved', sha: 'sha-v2' }, 'the base is what we pushed')
   })
 
   it('if the cache was written by the pre-fix version (stale SHA), refresh repairs it', () => {
     // Simulate a cache record created by the OLD saveNote bug: b64-v2 content
     // but sha-v1 tag.
-    const stale = makeStaleNote({ sha: 'sha-v1', content: 'b64-v2' })
+    const stale = makeStaleNote({ sha: 'sha-v1', content: 'b64-v2', baseText: 'v2 text', baseSha: 'sha-v1' })
 
     // Reload + open note
     const reopened = stale
     assert.equal(reopened.sha, 'sha-v1', 'old cache served a stale SHA')
 
-    // Background refresh: content matches the remote → skip, but SHA differs
-    const decision = decideRemoteRefresh(reopened, false, false, 'b64-v2', 'sha-v2')
-    assert.equal(decision.action, 'skip', 'content matches → skip')
-    const reconciled = reconcileSha(reopened, [reopened], 'sha-v2')
-    assert.ok(reconciled, 'reconciliation produced')
-    assert.equal(reconciled!.currentFile.sha, 'sha-v2', 'refresh repaired the SHA')
+    // Background refresh: base SHA is behind the remote → fast-forward, which
+    // repairs the SHA, the base and the payload in one step.
+    assert.equal(planPull({ base: baseOf(reopened), remoteSha: 'sha-v2', working: null }), 'apply')
+    const refreshed = applyRemoteContent(reopened, [reopened], 'b64-v2', 'v2 text', 'sha-v2')
+    assert.equal(refreshed.currentFile.sha, 'sha-v2', 'refresh repaired the SHA')
+    assert.deepEqual(baseOf(refreshed.currentFile), { text: 'v2 text', sha: 'sha-v2' })
 
     // User saves → sends sha-v2 → GitHub has sha-v2 → no false conflict
-    assert.equal(reconciled!.currentFile.sha, 'sha-v2', 'save uses the repaired SHA')
+    assert.equal(refreshed.currentFile.sha, 'sha-v2', 'save uses the repaired SHA')
   })
 })
 

@@ -1,5 +1,6 @@
 import type { HLJSApi } from 'highlight.js'
 import type { CachedRecord, Dir, Note } from './types.ts'
+import { adoptBase, withBase } from './sync.ts'
 
 export function withTimeout<T>(
   promise: Promise<T>,
@@ -148,12 +149,26 @@ export interface CleanResult {
   isDirty: false
 }
 
+/**
+ * Open/decrypt transition. The decrypted text is both the dirty-compare
+ * baseline and the merge base, so the editor's "unsaved changes" test and the
+ * pull decision compare against the same thing.
+ *
+ * Without the plaintext (`decryptedText` omitted) the base is honestly unknown:
+ * pairing a blob SHA with a stale text would produce a bogus three-way merge
+ * later, so it degrades to "no base" → the ⚠️ button instead of a wrong answer.
+ * app.ts always passes the text.
+ */
 export function markNoteClean(note: Note, notes: Note[], decryptedText?: string): CleanResult {
   const text = decryptedText ?? ''
-  const updated: Note = { ...note, dirty: false, decrypted: text, originalText: text }
+  const sha = note.sha ?? null
+  const base: Note =
+    decryptedText === undefined
+      ? withBase({ ...note, dirty: false, decrypted: text, originalText: text }, null, sha)
+      : adoptBase({ ...note, dirty: false, decrypted: text }, text, sha)
   return {
-    currentFile: updated,
-    notes: notes.map(n => (n.path === note.path ? updated : n)),
+    currentFile: base,
+    notes: notes.map(n => (n.path === note.path ? base : n)),
     originalContent: text,
     isDirty: false,
   }
@@ -163,9 +178,15 @@ export interface RevertResult extends CleanResult {
   currentContent: string
 }
 
+/**
+ * Discarding local edits puts the working copy back on the last synced content
+ * — which is what the merge base *is*, so the base is (re)established here. This
+ * also heals notes whose base was never recorded (a cache written before the
+ * base was tracked) as long as they carry an `originalText`.
+ */
 export function revertNote(note: Note, notes: Note[]): RevertResult {
   const text = note.originalText || ''
-  const updated: Note = { ...note, dirty: false, decrypted: text }
+  const updated: Note = adoptBase({ ...note, dirty: false, decrypted: text }, text, note.sha ?? null)
   return {
     currentFile: updated,
     notes: notes.map(n => (n.path === note.path ? updated : n)),
@@ -193,6 +214,10 @@ export interface SaveCleanResult {
  * note object in state.notes — and therefore the IndexedDB cache — holding a
  * stale SHA, so a later reload restored the stale SHA and the next save got a
  * false 409 conflict against the user's own previous save.
+ *
+ * The pushed text also becomes the new merge base: what we just committed *is*
+ * the last content known to be on the remote, so the next connect is a no-op
+ * and a concurrent remote change is measured against what we pushed.
  */
 export function saveNoteClean(
   note: Note,
@@ -202,14 +227,8 @@ export function saveNoteClean(
   decryptedText?: string,
 ): SaveCleanResult {
   const text = decryptedText ?? ''
-  const updated: Note = {
-    ...note,
-    dirty: false,
-    decrypted: text,
-    originalText: text,
-    content: b64Content,
-    sha: newSha,
-  }
+  const written: Note = { ...note, dirty: false, decrypted: text, content: b64Content, sha: newSha }
+  const updated: Note = decryptedText === undefined ? withBase(written, null, newSha) : adoptBase(written, text, newSha)
   return {
     currentFile: updated,
     notes: notes.map(n => (n.path === note.path ? updated : n)),
@@ -242,6 +261,11 @@ export interface RemoteRefreshResult {
   isDirty: false
 }
 
+/**
+ * Fast-forward: the remote copy replaced the working copy, so it is also the new
+ * merge base. A subsequent connect therefore compares against this SHA and
+ * reports "up to date" instead of re-applying.
+ */
 export function applyRemoteContent(
   note: Note,
   notes: Note[],
@@ -249,7 +273,7 @@ export function applyRemoteContent(
   decrypted: string,
   sha: string,
 ): RemoteRefreshResult {
-  const updated: Note = { ...note, content, decrypted, dirty: false, originalText: decrypted, sha }
+  const updated: Note = adoptBase({ ...note, content, decrypted, dirty: false, sha }, decrypted, sha)
   return {
     currentFile: updated,
     notes: notes.map(n => (n.path === note.path ? updated : n)),
@@ -257,24 +281,6 @@ export function applyRemoteContent(
     originalContent: decrypted,
     isDirty: false,
   }
-}
-
-export type RemoteRefreshDecision =
-  | { action: 'skip' }
-  | { action: 'apply'; content: string; sha: string }
-  | { action: 'flag'; content: string; sha: string }
-
-export function decideRemoteRefresh(
-  openFile: Note | null,
-  isDirty: boolean,
-  hasDraft: boolean,
-  remoteContent: string | null,
-  remoteSha: string,
-): RemoteRefreshDecision {
-  if (!openFile || !remoteContent) return { action: 'skip' }
-  if (remoteContent === openFile.content) return { action: 'skip' }
-  if (isDirty || hasDraft) return { action: 'flag', content: remoteContent, sha: remoteSha }
-  return { action: 'apply', content: remoteContent, sha: remoteSha }
 }
 
 export interface PendingRefresh {

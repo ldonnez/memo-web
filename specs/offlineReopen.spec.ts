@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { decideRemoteRefresh } from '../lib/util.ts'
 import { draftCache } from '../lib/draft.ts'
+import { planPull, baseOf, carryBases, localWorkingText, isModified } from '../lib/sync.ts'
 import type { Note, Dir } from '../lib/types.ts'
 
 // =====================================================================
@@ -545,16 +545,16 @@ describe('offline reopen — loadFromCache edge cases', () => {
 
 // =====================================================================
 // Reopen of a subdir note must NOT prefetch the dir listing into the note's
-// `content`: that advances the note to the NEW remote b64 before the draft
-// restore, so refreshOpenNoteContent sees "remote unchanged" and skips the
-// dirty-flag → the ⚠️ Remote warning button never shows.
+// `content` *or* advance its merge base: doing so makes the note look like it
+// already contains the remote, so refreshOpenNoteContent sees "up to date"
+// and the ⚠️ Remote warning button never shows.
 // =====================================================================
 
-/** Mirrors app.ts navigateToDir(dir, { prefetch: false }) online: fresh content-less listing + merge of the previous cached record's content into notes. */
+/** Mirrors app.ts navigateToDir(dir, { prefetch: false }) online: fresh content-less listing + merge of the previous cached record's content *and* merge base into notes. */
 function navigateToDirNoPrefetch(fresh: Note[], cachedDir: RecordData, dir: string): SnapState {
   const prev = new Map(cachedDir.notes.map(n => [n.path, n]))
   return {
-    notes: fresh.map(n => {
+    notes: carryBases(fresh, cachedDir.notes).map(n => {
       const p = prev.get(n.path)
       return p && p.content ? { ...n, content: p.content, sha: p.sha ?? n.sha } : n
     }),
@@ -643,43 +643,56 @@ describe('closeEditor must not clear the pending remote-refresh warning', () => 
   })
 })
 
-describe('a connect prefetch must not advance the drafted note baseline (second-reload regression)', () => {
+describe('a connect prefetch must not advance the merge base (second-reload regression)', () => {
   // User flow: edit locally → another device pushes → reload #1 shows the ⚠️
   // button ✓ → reload #2 loses it ✗. Root cause: reload #1's connect re-fetched
-  // the fresher remote content into the note and cached it, so reload #2 loaded
-  // that as the dirty-compare baseline → remote === baseline → decideRemoteRefresh
-  // 'skip' → clearRemoteRefresh(). Mirrors app.ts doConnect merge: a drafted
-  // note's baseline (content BEFORE the prefetch) survives the fetch + cache.
+  // the fresher remote content into the note and cached it *as the base*, so
+  // reload #2 loaded remote === base → 'up-to-date' → clearRemoteRefresh().
+  // Mirrors app.ts doConnect: carryBases() re-attaches the pre-connect base.
   function currentNote(state: SnapState, path: string): Note {
     const found = state.notes.find(n => n.path === path)
     assert.ok(found, `note ${path} present`)
     return found
   }
 
-  it('a connect prefetch does not advance the drafted note baseline', () => {
+  it('a connect prefetch does not advance the merge base', () => {
     const B64_OLD = 'bG9jYWwtYmFzZWxpbmU=' // what the user originally opened/edited
     const B64_NEW = 'bmV3ZXItcmVtb3Rl' // pushed from the other device
-    draftCache.set('root.md.gpg', 'MY-EDITED-DRAFT')
+    const OLD_TEXT = 'local-baseline'
+    const EDIT = 'MY-EDITED-DRAFT'
+    draftCache.set('root.md.gpg', EDIT)
     try {
-      const base = { ...ROOT, notes: [{ ...makeNote('root.md.gpg', 'root.md.gpg'), content: B64_OLD, sha: 'sha-old' }] }
-      // reload #1: loadFromCache restores the baseline; selectNote opens the note.
+      const base = {
+        ...ROOT,
+        notes: [
+          {
+            ...makeNote('root.md.gpg', 'root.md.gpg'),
+            content: B64_OLD,
+            sha: 'sha-old',
+            baseText: OLD_TEXT,
+            baseSha: 'sha-old',
+          },
+        ],
+      }
+      // reload #1: loadFromCache restores the base; selectNote opens the note.
       const afterLoad = selectNote(
         loadFromCache({ notes: [], dirs: [], currentBrowsePath: '', currentFile: null }, { '(root)': base }, '(root)'),
         'root.md.gpg',
       )
 
-      // doConnect (mirror): parseEntries rebuilds notes; the naive prefetch would
-      // return the fresher remote content for the drafted note…
+      // doConnect (mirror): parseEntries rebuilds notes from the fresh listing…
       const prefetched = [{ ...makeNote('root.md.gpg', 'root.md.gpg'), content: B64_NEW, sha: 'sha-new' }]
-      // …but the baseline capture + merge keep the pre-connect content for drafts.
-      const baselineByPath = new Map(afterLoad.notes.map(n => [n.path, n]))
-      const merged = prefetched.map(n => (draftCache.has(n.path) ? (baselineByPath.get(n.path) ?? n) : n))
-      const mergedNote = merged.find(n => n.path === 'root.md.gpg')
-      assert.ok(mergedNote, 'merged note present')
-      assert.equal(mergedNote.content, B64_OLD, 'drafted note baseline untouched by prefetch')
+      // …and carryBases re-attaches the pre-connect merge base, which the naive
+      // prefetch would have advanced to the new remote.
+      const merged = carryBases(prefetched, afterLoad.notes)
+      const mergedNote = currentNote({ ...afterLoad, notes: merged }, 'root.md.gpg')
+      assert.equal(mergedNote.content, B64_NEW, 'the listing does adopt the fresh payload')
+      assert.deepEqual(baseOf(mergedNote), { text: OLD_TEXT, sha: 'sha-old' }, 'but the merge base does not move')
+      const working = localWorkingText({ draft: draftCache.get('root.md.gpg'), isOpenDirty: true })
+      assert.equal(isModified(baseOf(mergedNote), working), true, 'the edit is a real divergence')
       assert.equal(
-        decideRemoteRefresh(mergedNote, true, true, B64_NEW, 'sha-new').action,
-        'flag',
+        planPull({ base: baseOf(mergedNote), remoteSha: 'sha-new', working }),
+        'conflict',
         'refresh still flags → ⚠️ button stays across reload #2',
       )
     } finally {
@@ -687,23 +700,38 @@ describe('a connect prefetch must not advance the drafted note baseline (second-
     }
   })
 
-  it('reload #1 and #2 both decide flag when the baseline stays put', () => {
+  it('reload #1 and #2 both decide conflict when the merge base stays put', () => {
     const B64_OLD = 'YmFzZWxpbmU='
     const B64_NEW = 'bG9jYWwtYmFzZWxpbmU='
+    const OLD_TEXT = 'baseline'
     draftCache.set('root.md.gpg', 'DRAFT')
     try {
       const base = {
         ...ROOT,
-        notes: [{ ...makeNote('root.md.gpg', 'root.md.gpg'), content: B64_OLD, sha: 'sha-old' }],
+        notes: [
+          {
+            ...makeNote('root.md.gpg', 'root.md.gpg'),
+            content: B64_OLD,
+            sha: 'sha-old',
+            baseText: OLD_TEXT,
+            baseSha: 'sha-old',
+          },
+        ],
       }
       let state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
       state = selectNote(loadFromCache(state, { '(root)': base }, '(root)'), 'root.md.gpg')
 
       for (let reload = 1; reload <= 2; reload++) {
-        state = loadFromCache(state, { '(root)': base }, '(root)') // cache still holds baseline
-        const decision = decideRemoteRefresh(currentNote(state, 'root.md.gpg'), true, true, B64_NEW, 'sha-new')
-        assert.equal(decision.action, 'flag', `reload ${reload} flags (does not skip/clear)`)
-        assert.equal(currentNote(state, 'root.md.gpg').content, B64_OLD, `reload ${reload} baseline unchanged`)
+        state = loadFromCache(state, { '(root)': base }, '(root)') // cache still holds the base
+        const fresh = [{ ...makeNote('root.md.gpg', 'root.md.gpg'), content: B64_NEW, sha: 'sha-new' }]
+        const note = currentNote({ ...state, notes: carryBases(fresh, state.notes) }, 'root.md.gpg')
+        const working = localWorkingText({ draft: draftCache.get('root.md.gpg'), isOpenDirty: true })
+        assert.equal(
+          planPull({ base: baseOf(note), remoteSha: 'sha-new', working }),
+          'conflict',
+          `reload ${reload} flags (does not skip/clear)`,
+        )
+        assert.deepEqual(baseOf(note), { text: OLD_TEXT, sha: 'sha-old' }, `reload ${reload} base unchanged`)
       }
     } finally {
       draftCache.delete('root.md.gpg')
@@ -711,16 +739,24 @@ describe('a connect prefetch must not advance the drafted note baseline (second-
   })
 })
 
-describe('openNoteByPath prefetch opt-out keeps the dirty-flag baseline', () => {
+describe('openNoteByPath prefetch opt-out keeps the merge base', () => {
   function cachedSubWithContent(content: string | null): RecordData {
     return {
-      notes: [{ ...makeNote('note.md.gpg', 'sub/note.md.gpg'), content }],
+      notes: [
+        {
+          ...makeNote('note.md.gpg', 'sub/note.md.gpg'),
+          content,
+          sha: 'sha-old',
+          baseText: 'baseline text',
+          baseSha: 'sha-old',
+        },
+      ],
       dirs: [],
       currentBrowsePath: 'sub',
     }
   }
 
-  it('navigateToDir(prefetch:false) retains the OLD cached content, so a changed remote flags the warning', () => {
+  it('navigateToDir(prefetch:false) retains the OLD cached content and base, so a changed remote flags', () => {
     const navigated = navigateToDirNoPrefetch(
       [makeNote('note.md.gpg', 'sub/note.md.gpg')],
       cachedSubWithContent('old-remote-b64'),
@@ -729,20 +765,30 @@ describe('openNoteByPath prefetch opt-out keeps the dirty-flag baseline', () => 
     const reopened = selectNote(navigated, 'sub/note.md.gpg')
     const note = reopened.notes.find(n => n.path === 'sub/note.md.gpg')!
 
-    // Baseline preserved → decideRemoteRefresh can see the remote changed.
-    assert.equal(note.content, 'old-remote-b64', 'baseline must stay the OLD cached content')
-    const decision = decideRemoteRefresh(note, /*isDirty*/ true, /*hasDraft*/ true, 'new-remote-b64', 'new-sha')
-    assert.equal(decision.action, 'flag', 'dirty reopen + changed remote → offer the warning button')
+    assert.equal(note.content, 'old-remote-b64', 'payload must stay the OLD cached content')
+    assert.deepEqual(baseOf(note), { text: 'baseline text', sha: 'sha-old' }, 'merge base must stay too')
+    assert.equal(
+      planPull({ base: baseOf(note), remoteSha: 'sha-new', working: 'my edit' }),
+      'conflict',
+      'dirty reopen + changed remote → offer the warning button',
+    )
   })
 
-  it('regression: the old prefetching navigateToDir advanced content to the new remote → no flag shown', () => {
-    // Old behavior: fetchAllNotesContent wrote the NEW b64 into the note's content.
+  it('regression: the old prefetching navigateToDir advanced the base to the new remote → no flag shown', () => {
+    // Old behavior: fetchAllNotesContent wrote the NEW b64 into the note's content,
+    // and opening that content adopted it as the base — so remote === base and the
+    // divergence became invisible.
     const note = {
       ...makeNote('note.md.gpg', 'sub/note.md.gpg'),
       content: 'new-remote-b64' as string | null,
       sha: 'new-sha',
+      baseText: 'new remote text',
+      baseSha: 'new-sha',
     }
-    const decision = decideRemoteRefresh(note, true, true, 'new-remote-b64', 'new-sha')
-    assert.equal(decision.action, 'skip', 'bug: remote === advanced listing content → warning never offered')
+    assert.equal(
+      planPull({ base: baseOf(note), remoteSha: 'new-sha', working: 'my edit' }),
+      'up-to-date',
+      'bug: remote === advanced base → warning never offered',
+    )
   })
 })

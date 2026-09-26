@@ -1,5 +1,6 @@
 import { draftCache, contentCache } from './draft.ts'
-import { arrayToBase64, cacheNotesToLocalStorage } from './util.ts'
+import { arrayToBase64, cacheNotesToLocalStorage, loadCachedNotes } from './util.ts'
+import { carryBases } from './sync.ts'
 import type { Config, Dir, DirWithType, GhFileData, GhFileEntry, Note } from './types.ts'
 
 export interface EntriesResult {
@@ -34,6 +35,9 @@ export function parseEntries(
         sha: i.sha ?? null,
         size: i.size ?? 0,
         date: i.last_modified || '',
+        // Lower bound only: a fresh listing has no merge base yet, so a draft
+        // can only be reported as "possibly unsaved". Callers refine this with
+        // applyLocalStatus() once the base has been carried over.
         dirty: draftCache.has(i.path!) || false,
         content: null,
         originalText: '',
@@ -208,11 +212,11 @@ export async function fetchAllNotesContent(config: Config, notes: Note[]): Promi
   const queue = updated
     .map((n, i) => ({ note: n, index: i }))
     .filter(({ note }) => !note.content)
-    // Never advance the baseline of a note with an active draft: if the prefetch
-    // pulls fresher remote content into the note, the next reload reads it as the
-    // dirty-compare baseline and decideRemoteRefresh sees remote === baseline →
-    // 'skip' → clears the persisted ⚠️ warning. The open note is refreshed by
-    // refreshOpenNoteContent() instead, which keeps the original baseline.
+    // Never advance a note with an active draft: the prefetch pulls the remote
+    // blob, but the note's merge base must stay pinned at the content the user
+    // started editing from — that is the "ours" side of every later pull
+    // decision. The open note is refreshed by refreshOpenNoteContent() instead,
+    // which keeps the original baseline.
     .filter(({ note }) => !draftCache.has(note.path))
 
   for (let start = 0; start < queue.length; start += CONTENT_CONCURRENCY) {
@@ -234,7 +238,18 @@ export async function fetchAllNotesContent(config: Config, notes: Note[]): Promi
   return updated
 }
 
+/**
+ * A prefetch skips drafted notes, so their cached blob stays at the content the
+ * user opened. Keep the merge base alongside it — both describe "what we last
+ * synced for this path" and are only advanced together, on a decrypted
+ * observation.
+ */
 export function restoreDraftBaselines(notes: Note[]): Note[] {
+  // Only the encrypted blob is recoverable here, so `originalText` stays as the
+  // listing left it. That is fine: selectNote() re-points a drafted note's
+  // originalText at the merge base when it opens, which is the only place that
+  // has the plaintext (decrypting every note on a background walk would be
+  // wasteful, and it is what keeps "discard" from emptying the note).
   return notes.map(n => {
     if (!draftCache.has(n.path)) return n
     const baseline = contentCache.get(n.path)
@@ -288,11 +303,17 @@ export async function walkAllDirsAndPrefetch(
       const withContent = await fetchAllNotesContent(config, notes)
       // Drafted notes are skipped by fetchAllNotesContent, so restore their
       // baseline (set at init from loadFromCache) before caching the dir record —
-      // otherwise the next reload reads a null baseline and the persisted ⚠️
-      // warning can never settle correctly.
+      // otherwise the next reload reads a null baseline and the pull decision
+      // can never settle correctly.
       const withBaselines = restoreDraftBaselines(withContent)
+      // The merge base for these paths lives in this dir's own cache record (it
+      // is only ever written when a note in this dir is opened, saved or
+      // refreshed). Re-reading the record keeps the base across a background
+      // walk, which rebuilds every note object from a fresh listing.
+      const existing = await loadCachedNotes(dir)
+      const merged = carryBases(withBaselines, existing?.notes ?? [])
       await cacheNotesToLocalStorage(
-        withBaselines,
+        merged,
         entries.filter((e): e is DirWithType => e.type === 'dir').map(e => ({ name: e.name, path: e.path })),
         dir,
       )

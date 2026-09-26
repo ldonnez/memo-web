@@ -38,7 +38,6 @@ import {
   reconcileSha,
   revertNote,
   applyRemoteContent,
-  decideRemoteRefresh,
   serializePendingRefresh,
   parsePendingRefresh,
   cacheNotesToLocalStorage,
@@ -53,6 +52,17 @@ import {
   clearLastNotePath,
 } from './lib/util.ts'
 import type { PendingRefresh } from './lib/util.ts'
+import {
+  baseOf,
+  localWorkingText,
+  planPull,
+  decidePull,
+  carryBases,
+  mergeDirListing,
+  applyLocalStatus,
+  isModified,
+  adoptBase,
+} from './lib/sync.ts'
 import {
   contentCache,
   draftCache,
@@ -131,7 +141,11 @@ async function loadFromCache(path: string, extraState: Partial<AppState> = {}) {
     cached = pickBestCachedRecord(records)
   }
   if (!cached || !cached.notes || !cached.notes.length) return false
-  const notes = cached.notes.map(n => ({ ...n, dirty: draftCache.has(n.path) || n.dirty }))
+  // The record carries each note's merge base, so the offline view knows exactly
+  // what the remote looked like when it was cached. `dirty` is re-derived from
+  // that base: a note that was merely opened (draft written on navigation, text
+  // identical to the base) is not modified and must not be badged as such.
+  const notes = applyLocalStatus(cached.notes, p => draftCache.get(p))
   for (const n of notes) {
     if (n.content) contentCache.set(n.path, n.content)
   }
@@ -337,12 +351,16 @@ async function doConnect(c: Config, signal: AbortSignal) {
     return
   }
 
-  const { dirs, notes } = parseEntries(entries, ext)
+  const { dirs, notes: listed } = parseEntries(entries, ext)
+  // The listing replaces every note object, so carry the merge base (and the
+  // pre-prefetch blob of a drafted note) over from the previous notes. The base
+  // is deliberately NOT advanced here: only a decrypted observation may move
+  // it, and a stale base is exactly what the pull decision needs to detect that
+  // the remote moved on.
+  const notes = applyLocalStatus(carryBases(listed, state.notes), p => draftCache.get(p))
   // Capture the pre-parse notes (the cached baseline) BEFORE fetchAllNotesContent,
-  // so a drafted note's baseline survives the connect's own content prefetch and
-  // cache write. Otherwise the first reload re-keys the dirty-compare baseline to
-  // the freshest remote content, and the second reload's decideRemoteRefresh sees
-  // remote === baseline → 'skip' → clears the persisted ⚠️ warning.
+  // so a drafted note's blob survives the connect's own content prefetch and
+  // cache write.
   const baselineByPath = new Map(state.notes.map(n => [n.path, n]))
   state = { ...state, dirs, notes, currentBrowsePath: path, totalNotes: notes.length, totalDirs: dirs.length }
   pruneContentCache(notes, path)
@@ -357,16 +375,6 @@ async function doConnect(c: Config, signal: AbortSignal) {
   setConnectionStatus(`Connected · ${buildStatusText(state.totalNotes, state.totalDirs)}`, true)
   renderNoteList()
   await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
-  setTimeout(
-    () =>
-      walkAllDirsAndPrefetch(state.config, path, ext)
-        .then(({ totalNotes, totalDirs }) => {
-          state = { ...state, totalNotes, totalDirs }
-          setConnectionStatus(`Connected · ${buildStatusText(totalNotes, totalDirs)}`, true)
-        })
-        .catch(e => console.warn('background sync:', e.message)),
-    0,
-  )
   byEl<HTMLButtonElement>('newNoteBtn').disabled = false
 
   const currentFile = state.currentFile
@@ -378,45 +386,138 @@ async function doConnect(c: Config, signal: AbortSignal) {
       await refreshOpenNoteContent()
     }
   }
+
+  // The walk rebuilds every note from a fresh listing and carries the merge base
+  // out of the record it is about to overwrite, so it must run AFTER the open note
+  // has been refreshed: otherwise it reads the pre-pull record and writes the
+  // stale base back over the one the pull just advanced.
+  setTimeout(
+    () =>
+      walkAllDirsAndPrefetch(state.config, path, ext)
+        .then(({ totalNotes, totalDirs }) => {
+          state = { ...state, totalNotes, totalDirs }
+          setConnectionStatus(`Connected · ${buildStatusText(totalNotes, totalDirs)}`, true)
+        })
+        .catch(e => console.warn('background sync:', e.message)),
+    0,
+  )
 }
 
-/** Re-fetch the open note from GitHub and push new content into the editor. */
-async function refreshOpenNoteContent() {
+/**
+ * The app's `git pull` for the open note: re-fetch it and reconcile against the
+ * merge base instead of asking "is there a draft?".
+ *
+ * A note with no local divergence fast-forwards silently — including a note that
+ * was merely opened and left alone, whose draft is byte-identical to the base.
+ * Only genuine divergence (local edits on both sides) raises the ⚠️ button, and
+ * that path never pays for a decryption.
+ */
+async function refreshOpenNoteContent(opts: { announce?: boolean } = {}) {
   const openFile = state.currentFile
   if (!openFile) return
   try {
     const data = await ghGetFile(state.config, openFile.path)
     if (!data || state.currentFile?.path !== openFile.path) return
-    const decision = decideRemoteRefresh(openFile, state.isDirty, draftCache.has(openFile.path), data.content, data.sha)
-    if (decision.action === 'skip') {
+    const base = baseOf(openFile)
+    const working = localWorkingText({
+      draft: draftCache.get(openFile.path),
+      openText: getContent(),
+      isOpenDirty: state.isDirty,
+    })
+    const plan = planPull({ base, remoteSha: data.sha, working })
+
+    if (plan === 'up-to-date') {
       if (pendingRemoteRefresh?.path === openFile.path || persistedRefreshFor(openFile.path)) {
         clearRemoteRefresh()
       }
-      // Content matches the remote, but the SHA can still be stale (e.g. the
-      // cache persisted the app's own prior save under the old SHA). Reconcile
-      // it so the next save does not 409 against the user's own previous save.
+      // The remote blob is the one the base was taken from, but the note can
+      // still carry a stale SHA (e.g. the cache persisted the app's own prior
+      // save under the old one). Reconcile it so the next save does not 409
+      // against the user's own previous save.
       const reconciled = reconcileSha(openFile, state.notes, data.sha)
-      if (reconciled) state = { ...state, ...reconciled }
+      if (reconciled) {
+        state = { ...state, ...reconciled }
+        // The repair is what the next save compares against (a stale SHA here is
+        // what makes a save 409 against the user's own earlier push), so the
+        // record is written before the next pull or walk can observe it.
+        await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
+      }
       return
     }
-    if (decision.action === 'flag') {
-      setPendingRemoteRefresh({ path: openFile.path, content: decision.content, sha: decision.sha })
-      return
-    }
-    const binary = Uint8Array.from(atob(data.content), c => c.charCodeAt(0))
-    const decrypted = await decryptContent(state.config, binary)
-    if (state.currentFile?.path !== openFile.path) return
-    if (state.isDirty || draftCache.has(openFile.path)) {
+
+    if (plan === 'conflict') {
       setPendingRemoteRefresh({ path: openFile.path, content: data.content, sha: data.sha })
       return
     }
-    const result = applyRemoteContent(openFile, state.notes, data.content, decrypted, data.sha)
-    state = { ...state, ...result }
-    setContent(result.currentContent)
-    updatePreview()
+
+    const binary = Uint8Array.from(atob(data.content), c => c.charCodeAt(0))
+    const decrypted = await decryptContent(state.config, binary)
+    if (state.currentFile?.path !== openFile.path) return
+    // 'decrypt' means the base is unknown, so the plaintext may still turn out to
+    // match the working copy — someone else already carries the same edit.
+    const action = plan === 'decrypt' ? decidePull({ base: base.text, working, remote: decrypted }) : 'fast-forward'
+    if (action === 'conflict') {
+      setPendingRemoteRefresh({ path: openFile.path, content: data.content, sha: data.sha })
+      return
+    }
+    if (action === 'up-to-date') {
+      // The working copy is already on the remote, so the draft is redundant
+      // rather than conflicting: adopt the remote as the base, drop the draft and
+      // leave the editor alone (decrypted === the text the user has).
+      removeDraft(openFile.path)
+      await adoptRemoteContent(openFile, data.content, decrypted, data.sha)
+      return
+    }
+    // A keystroke (or a navigation draft) may have landed while the blob was in
+    // flight — never yank the editor, flag it instead. Compare the CONTENT, not
+    // the draft's existence: a draft equal to the base is not a divergence.
+    const workingNow = localWorkingText({
+      draft: draftCache.get(openFile.path),
+      openText: getContent(),
+      isOpenDirty: state.isDirty,
+    })
+    if (isModified(base, workingNow)) {
+      setPendingRemoteRefresh({ path: openFile.path, content: data.content, sha: data.sha })
+      return
+    }
+    // Awaited: the caller is often doConnect(), which schedules the background
+    // walk straight after this returns. A fire-and-forget write would let the
+    // walk read the pre-pull record and write the stale base back over it.
+    await adoptRemoteContent(openFile, data.content, decrypted, data.sha)
+    if (opts.announce) toast('Updated to the latest remote version', 'info')
   } catch (e) {
     console.warn('Failed to refresh open note:', e instanceof Error ? e.message : e)
   }
+}
+
+/**
+ * Take the remote copy of the open note: content, editor text and merge base all
+ * move to it, and the record is re-persisted. The persist matters — the merge
+ * base lives in the IndexedDB record, and the background directory walk
+ * re-reads that record and writes it back, so an advance that is not written
+ * here is silently reverted (and the note re-pulls on the next load).
+ */
+function adoptRemoteContent(openFile: Note, content: string, decrypted: string, sha: string) {
+  const result = applyRemoteContent(openFile, state.notes, content, decrypted, sha)
+  state = { ...state, ...result }
+  contentCache.set(openFile.path, content)
+  // Taking the remote resolves whatever divergence the ⚠️ button was reporting
+  // for this note (e.g. the user undid their side of it, so the next pull can
+  // fast-forward instead of asking). Leaving the button up would send them here
+  // again for a conflict that no longer exists.
+  if (pendingRemoteRefresh?.path === openFile.path || persistedRefreshFor(openFile.path)) {
+    clearRemoteRefresh()
+  }
+  setContent(result.currentContent)
+  updatePreview()
+  renderNoteList()
+  // The note is clean against its new base, so the editor chrome must agree: the
+  // 'up-to-date' path reaches here from a dirty editor whose edit the remote
+  // already had, and a still-enabled Save would push the same text again.
+  byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
+  byEl<HTMLElement>('discardBtn').style.visibility = 'hidden'
+  byEl<HTMLButtonElement>('saveBtn').disabled = true
+  return cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
 }
 
 function persistedRefreshFor(path: string): PendingRefresh | null {
@@ -480,6 +581,18 @@ async function applyPendingRemoteRefresh() {
   const remote =
     pendingRemoteRefresh?.path === openFile.path ? pendingRemoteRefresh : persistedRefreshFor(openFile.path)
   if (!remote) return
+  // This is the destructive end of a divergence: it drops the local draft and
+  // loads the remote copy. A user who just lost a save race lands here from the
+  // ⚠️ button without necessarily knowing their text is about to be replaced, so
+  // ask while the draft is still intact. Compare against the base, not the
+  // draft's existence — a draft equal to the base holds nothing worth keeping.
+  const draft = draftCache.get(openFile.path)
+  if (draft !== undefined && isModified(baseOf(openFile), draft)) {
+    const ok = confirm(
+      `Load the remote version of "${openFile.name}"?\n\nYour unsaved changes to this note will be discarded. Copy them first if you want to keep them.`,
+    )
+    if (!ok) return
+  }
   clearRemoteRefresh()
   try {
     const binary = Uint8Array.from(atob(remote.content), c => c.charCodeAt(0))
@@ -491,6 +604,9 @@ async function applyPendingRemoteRefresh() {
     state = { ...state, ...result }
     setContent(result.currentContent)
     updatePreview()
+    // The base moved to the remote: persist it, or the background walk restores
+    // the old one and the next load starts the divergence dance again.
+    await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
     byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
     byEl<HTMLButtonElement>('discardBtn').style.visibility = 'hidden'
     byEl<HTMLElement>('editorStatus').textContent = ''
@@ -502,22 +618,17 @@ async function applyPendingRemoteRefresh() {
   }
 }
 
+/**
+ * Explicit `git pull`: refresh the listing, then reconcile the open note through
+ * the same merge-base decision the background connect uses. Local work is never
+ * thrown away — a note with genuine divergence keeps its draft and gets the ⚠️
+ * button instead.
+ */
 async function pullChanges() {
   const c = state.config
   if (!c.ghToken) {
     toast('Configure settings first', 'error')
     return
-  }
-
-  const dirtyFile = state.currentFile
-  clearRemoteRefresh()
-  if (dirtyFile && state.isDirty) {
-    toast('⚠️ Unsaved changes will be overwritten by remote', 'warning')
-    removeDraft(dirtyFile.path)
-    state = {
-      ...state,
-      notes: state.notes.map(n => (n.path === dirtyFile.path ? { ...n, dirty: false } : n)),
-    }
   }
 
   const currentPath = state.currentBrowsePath
@@ -529,38 +640,38 @@ async function pullChanges() {
   try {
     const entries = await ghListDir(state.config, currentPath || '')
     if (Array.isArray(entries)) {
-      const { dirs, notes } = parseEntries(entries, ext)
-      pruneContentCache(notes, currentPath)
-      state = { ...state, dirs, notes }
+      const { dirs, notes: listed } = parseEntries(entries, ext)
+      const merged = applyLocalStatus(carryBases(listed, state.notes), p => draftCache.get(p))
+      pruneContentCache(merged, currentPath)
+      state = { ...state, dirs, notes: merged }
       renderNoteList()
     }
     if (state.currentBrowsePath + '|' + (state.currentFile?.path || '') !== token) return
 
     const openFile = state.currentFile
+    let conflicts = 0
     if (openFile) {
       const stillExists = state.notes.find(n => n.path === openFile.path)
       if (stillExists) {
-        const data = await ghGetFile(state.config, openFile.path)
-        if (data) {
-          const binary = Uint8Array.from(atob(data.content), c => c.charCodeAt(0))
-          const decrypted = await decryptContent(state.config, binary)
-          if (state.currentFile?.path !== openFile.path) return
-          const updatedNote = { ...openFile, sha: data.sha, content: data.content, decrypted, dirty: false }
-          state = {
-            ...state,
-            notes: state.notes.map(n => (n.path === openFile.path ? updatedNote : n)),
-            currentFile: updatedNote,
-            originalContent: decrypted,
-            currentContent: decrypted,
-            isDirty: false,
-          }
-          setContent(decrypted)
-          updatePreview()
-        }
+        // Same merge-base decision as refreshOpenNoteContent, with an explicit
+        // announce — the user asked for this sync.
+        await refreshOpenNoteContent({ announce: true })
+        if (state.currentFile && persistedRefreshFor(state.currentFile.path)) conflicts++
       } else {
         closeEditor()
         toast('Current note was deleted on remote', 'info')
       }
+    }
+
+    // Drafts for notes that are not open are left alone: they are local work,
+    // and the remote copy is only merged into them when they are opened. Count
+    // the ones that genuinely diverge from their base — a draft equal to the base
+    // (a note that was merely opened) is not something the user has to act on, and
+    // drafts in other directories are none of this directory's business.
+    for (const n of state.notes) {
+      if (n.path === state.currentFile?.path) continue
+      const d = draftCache.get(n.path)
+      if (d !== undefined && isModified(baseOf(n), d)) conflicts++
     }
 
     state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) }
@@ -580,7 +691,12 @@ async function pullChanges() {
           .catch(e => console.warn('background sync:', e.message)),
       0,
     )
-    toast('Synced with remote', 'info')
+    toast(
+      conflicts
+        ? `Synced with remote · ${conflicts} note${conflicts === 1 ? '' : 's'} kept local edits`
+        : 'Synced with remote',
+      conflicts ? 'warning' : 'info',
+    )
   } catch (e) {
     setConnectionStatus('Sync failed', state.connected)
     toast(`Sync failed: ${errMsg(e)}`, 'error')
@@ -720,29 +836,22 @@ async function navigateToDir(dirPath: string, opts: { prefetch?: boolean } = {})
     }
 
     const ext = c.fileExt || '.md.gpg'
-    const { dirs, notes } = parseEntries(entries, ext)
-    state = { ...state, dirs, notes, currentBrowsePath: dirPath, currentFile: null, isDirty: false }
+    const { dirs, notes: listed } = parseEntries(entries, ext)
+    // The merge base (and the pre-edit blob of a drafted note) live in the TARGET
+    // directory's own cache record, not in the notes we are navigating away from —
+    // carrying from `state.notes` would match nothing and silently drop both.
+    const cached = await loadCachedNotes(dirPath || '')
+    const merged = applyLocalStatus(
+      mergeDirListing(listed, cached?.notes ?? [], p => draftCache.has(p)),
+      p => draftCache.get(p),
+    )
+    state = { ...state, dirs, notes: merged, currentBrowsePath: dirPath, currentFile: null, isDirty: false }
     closeEditor()
-    pruneContentCache(notes, dirPath)
+    pruneContentCache(merged, dirPath)
 
     if (prefetch) {
       state = { ...state, notes: await fetchAllNotesContent(state.config, state.notes) }
       if (state.currentBrowsePath !== dirPath) return
-    } else {
-      // Keep the previous cached content (esp. the reopened note's old version)
-      // so offline open still works and refreshOpenNoteContent has a baseline
-      // to diff against.
-      const cached = await loadCachedNotes(dirPath || '')
-      if (cached?.notes) {
-        const prev = new Map(cached.notes.map(n => [n.path, n]))
-        state = {
-          ...state,
-          notes: state.notes.map(n => {
-            const p = prev.get(n.path)
-            return p?.content ? { ...n, content: p.content, sha: p.sha ?? n.sha } : n
-          }),
-        }
-      }
     }
 
     setConnectionStatus(`Connected · ${buildStatusText(state.totalNotes, state.totalDirs)}`, true)
@@ -781,22 +890,65 @@ async function selectNote(path: string) {
 
   const draft = draftCache.get(note.path)
   if (draft !== undefined) {
-    setContent(draft)
-    state = {
-      ...state,
-      notes: state.notes.map(n => (n.path === note.path ? { ...n, dirty: true } : n)),
-      currentContent: draft,
-      originalContent: draft,
-      isDirty: true,
+    // The draft is the working copy; the merge base stays pinned at the content
+    // the user started editing from, so a later pull can tell "left untouched"
+    // (fast-forward) from "edited on both sides" (conflict).
+    let base = baseOf(note)
+    if (base.text === null && note.content) {
+      // Base unknown (first open on this device, or a cache written before the
+      // base was tracked). The cached blob is the best available stand-in for
+      // "what was last on the remote" — and it is the pre-edit one, because the
+      // prefetch skips drafted notes. Decrypting it also makes the discard button
+      // revert to real content instead of an empty note.
+      try {
+        const binary = Uint8Array.from(atob(note.content), c => c.charCodeAt(0))
+        const decryptedBase = await decryptContent(state.config, binary)
+        if (state.currentFile?.path !== note.path) return
+        base = { text: decryptedBase, sha: note.sha }
+        note = adoptBase(note, decryptedBase, note.sha)
+        state = {
+          ...state,
+          notes: state.notes.map(n => (n.path === note.path ? note : n)),
+          currentFile: note,
+        }
+      } catch (e) {
+        console.warn('Could not establish merge base for', note.path, errMsg(e))
+      }
     }
-    byEl<HTMLElement>('editorDirty').style.visibility = 'visible'
-    byEl<HTMLButtonElement>('discardBtn').style.visibility = 'visible'
-    byEl<HTMLElement>('editorStatus').textContent = ''
-    byEl<HTMLButtonElement>('saveBtn').disabled = false
-    byEl<HTMLButtonElement>('deleteBtn').disabled = false
-    updatePreview()
-    renderNoteList()
-    return
+    if (!isModified(base, draft)) {
+      // A draft byte-identical to the base means the note was opened and left
+      // alone — the draft is written on every navigation, so this is the common
+      // case, not a real edit. Drop it and load the note cleanly, which is what
+      // lets a changed remote fast-forward instead of raising ⚠️.
+      removeDraft(note.path)
+    } else {
+      const baseline = base.text ?? ''
+      // The note's own baseline must be re-pointed at the merge base, not left at
+      // whatever the listing carried (usually ''). revertNote() reads originalText
+      // and then adopts it as the base, so a stale '' would make Discard empty the
+      // note and record '' as the last synced content.
+      note = { ...note, originalText: baseline }
+      setContent(draft)
+      state = {
+        ...state,
+        notes: applyLocalStatus(
+          state.notes.map(n => (n.path === note.path ? note : n)),
+          p => draftCache.get(p),
+        ),
+        currentFile: note,
+        currentContent: draft,
+        originalContent: baseline,
+        isDirty: true,
+      }
+      byEl<HTMLElement>('editorDirty').style.visibility = 'visible'
+      byEl<HTMLButtonElement>('discardBtn').style.visibility = 'visible'
+      byEl<HTMLElement>('editorStatus').textContent = ''
+      byEl<HTMLButtonElement>('saveBtn').disabled = false
+      byEl<HTMLButtonElement>('deleteBtn').disabled = false
+      updatePreview()
+      renderNoteList()
+      return
+    }
   }
 
   byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
@@ -937,8 +1089,15 @@ function onEditorInput() {
   const newContent = getContent()
   const result = computeDirtyState(state.notes, state.currentFile, newContent, state.originalContent)
   state = { ...state, currentContent: newContent, ...result }
-  if (result.isDirty && state.currentFile) {
-    saveDraft(state.currentFile.path, newContent)
+  if (state.currentFile) {
+    // The draft is the persisted working copy, so it has to track the editor in
+    // BOTH directions. Only writing it while dirty leaves the abandoned text of
+    // an undone edit behind: it would resurrect on the next open, badge the note
+    // unsaved forever, and make every later remote change a ⚠️ conflict. Since
+    // `isDirty` compares against the merge base, "not dirty" means the draft
+    // would be byte-identical to the base — i.e. no local work worth keeping.
+    if (result.isDirty) saveDraft(state.currentFile.path, newContent)
+    else removeDraft(state.currentFile.path)
   }
   const filenameEl = byEl<HTMLElement>('editorFilename')
   const dirtyEl = byEl<HTMLElement>('editorDirty')
@@ -1246,8 +1405,13 @@ async function saveNote() {
   } catch (e) {
     const msg = errMsg(e)
     const isConflict = msg.includes('does not match') || msg.includes('409') || msg.toLowerCase().includes('conflict')
+    // The old wording sent the user to 🔄 Sync, which only re-raises the ⚠️
+    // button — and that button loads the remote over the local edit. Name the
+    // trade-off instead of implying a save will just work.
     toast(
-      isConflict ? `⛔ Remote file changed — click 🔄 Sync to refresh, then save again` : `Save failed: ${msg}`,
+      isConflict
+        ? '⛔ Remote file changed since your last sync — your edit was NOT saved. Copy your text, then use ⚠️ Remote to load theirs (that discards your edit) or discard locally to start from theirs.'
+        : `Save failed: ${msg}`,
       'error',
     )
     btn.disabled = false

@@ -7,10 +7,10 @@ import {
   cleanNoteInList,
   formatNoteItem,
   applyRemoteContent,
-  decideRemoteRefresh,
   serializePendingRefresh,
   parsePendingRefresh,
 } from '../lib/util.ts'
+import { planPull, decidePull, localWorkingText, baseOf } from '../lib/sync.ts'
 import type { Note } from '../lib/types.ts'
 
 function makeNote(overrides: Partial<Note> = {}): Note {
@@ -224,21 +224,16 @@ describe('save button state (isDirty → saveBtn.disabled = !isDirty)', () => {
     assert.equal(loaded.currentFile.dirty, false)
   })
 
-  it('draft load (originalContent set to draft text) → save enabled', () => {
+  it('draft load (originalContent set to the base) → save disabled', () => {
     const note = makeNote({ dirty: false, decrypted: null, originalText: '' })
     const draft = 'unsaved draft text'
-    // selectNote draft path sets originalContent to draft and isDirty true
-    const loaded = { ...computeDirtyState([note], note, draft, ''), isDirty: true }
-    assert.equal(loaded.isDirty, true)
-    // If user does not edit further, content == original (both draft)
-    const noEdit = computeDirtyState(loaded.notes, loaded.currentFile, draft, draft)
-    // isDirty is false BUT selectNote overrides to true —
-    // This documents the choice: draft loads force dirty regardless of comparison
-    assert.equal(
-      noEdit.isDirty,
-      false,
-      'computeDirtyState says clean when draft===original, but selectNote forces isDirty=true',
-    )
+    // selectNote's draft path re-points the dirty comparison at the merge base,
+    // so an untouched draft reads as clean. A draft that differs from the base
+    // is what makes the note dirty (see specs/syncBase.spec.ts).
+    const loaded = computeDirtyState([note], note, draft, draft)
+    assert.equal(loaded.isDirty, false, 'a draft equal to the base is not a modification')
+    const edited = computeDirtyState(loaded.notes, loaded.currentFile, `${draft}!`, draft)
+    assert.equal(edited.isDirty, true, 'editing on top of a draft is a modification')
   })
 })
 
@@ -277,56 +272,52 @@ describe('applyRemoteContent (open-note refresh after reconnect)', () => {
   })
 })
 
-describe('decideRemoteRefresh (dirty note sits on a changed remote)', () => {
-  const remote = makeNote({
-    path: 'note.md.gpg',
-    decrypted: 'stale cached text',
-    originalText: 'stale cached text',
-    content: 'old-b64',
-    sha: 'old-sha',
+describe('the pull decision for the open note (base / working / remote)', () => {
+  const BASE = 'base text'
+  const LOCAL = 'unsaved edits'
+  const REMOTE = 'fresh text from origin'
+  const known = { text: BASE, sha: 'old-sha' }
+
+  it('remote SHA === base SHA → up-to-date (nothing to pull)', () => {
+    assert.equal(planPull({ base: known, remoteSha: 'old-sha', working: null }), 'up-to-date')
   })
 
-  it('no open note → skip', () => {
-    assert.deepEqual(decideRemoteRefresh(null, false, false, 'new-b64', 'new-sha'), { action: 'skip' })
+  it('remote moved + no local edits → apply (auto fast-forward)', () => {
+    assert.equal(planPull({ base: known, remoteSha: 'new-sha', working: null }), 'apply')
   })
 
-  it('remote missing → skip', () => {
-    assert.deepEqual(decideRemoteRefresh(remote, false, false, null, 'new-sha'), { action: 'skip' })
+  it('remote moved + a draft identical to the base → apply, not a warning', () => {
+    // The reported bug: a draft is written on every navigation, so an untouched
+    // note used to look "locally modified" and every remote change became a ⚠️.
+    assert.equal(planPull({ base: known, remoteSha: 'new-sha', working: BASE }), 'apply')
   })
 
-  it('remote unchanged → skip', () => {
-    assert.deepEqual(decideRemoteRefresh(remote, false, false, 'old-b64', 'old-sha'), { action: 'skip' })
+  it('remote moved + real local edits → conflict (never clobber unsaved edits)', () => {
+    assert.equal(planPull({ base: known, remoteSha: 'new-sha', working: LOCAL }), 'conflict')
   })
 
-  it('remote changed + clean note → auto apply', () => {
-    assert.deepEqual(decideRemoteRefresh(remote, false, false, 'new-b64', 'new-sha'), {
-      action: 'apply',
-      content: 'new-b64',
-      sha: 'new-sha',
-    })
+  it('a local edit does not raise a warning while the remote is unchanged', () => {
+    assert.equal(planPull({ base: known, remoteSha: 'old-sha', working: LOCAL }), 'up-to-date')
   })
 
-  it('remote changed + dirty note → flag (never clobber unsaved edits)', () => {
-    assert.deepEqual(decideRemoteRefresh(remote, true, false, 'new-b64', 'new-sha'), {
-      action: 'flag',
-      content: 'new-b64',
-      sha: 'new-sha',
-    })
+  it('unknown base + local edits → decrypt, and only the plaintext can conflict', () => {
+    const unknown = baseOf(makeNote())
+    assert.deepEqual(unknown, { text: null, sha: null })
+    assert.equal(planPull({ base: unknown, remoteSha: 'new-sha', working: LOCAL }), 'decrypt')
+    assert.equal(decidePull({ base: null, working: LOCAL, remote: REMOTE }), 'conflict')
+    assert.equal(decidePull({ base: null, working: LOCAL, remote: LOCAL }), 'up-to-date')
   })
 
-  it('remote changed + existing draft → flag', () => {
-    assert.deepEqual(decideRemoteRefresh(remote, false, true, 'new-b64', 'new-sha'), {
-      action: 'flag',
-      content: 'new-b64',
-      sha: 'new-sha',
-    })
+  it('applyRemoteContent then the next pull is up-to-date', () => {
+    const note = makeNote({ path: 'note.md.gpg', originalText: BASE, baseText: BASE, baseSha: 'old-sha' })
+    const fresh = applyRemoteContent(note, [note], 'new-b64', REMOTE, 'new-sha')
+    assert.equal(planPull({ base: baseOf(fresh.currentFile), remoteSha: 'new-sha', working: null }), 'up-to-date')
   })
 
-  it('dirty state loses (user saves first) → remote now matches → skip', () => {
-    const saved = applyRemoteContent(remote, [remote], 'new-b64', 'fresh', 'new-sha')
-    assert.deepEqual(decideRemoteRefresh(saved.currentFile, false, false, 'new-b64', 'new-sha'), {
-      action: 'skip',
-    })
+  it('an open, dirty editor is a working copy only while it is dirty', () => {
+    assert.equal(localWorkingText({ openText: LOCAL, isOpenDirty: true }), LOCAL)
+    assert.equal(localWorkingText({ openText: REMOTE, isOpenDirty: false }), null)
+    assert.equal(localWorkingText({ draft: LOCAL, openText: REMOTE, isOpenDirty: false }), LOCAL, 'a draft counts too')
   })
 })
 
