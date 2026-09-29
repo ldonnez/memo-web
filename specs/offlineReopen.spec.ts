@@ -108,12 +108,29 @@ async function openNoteByPath(state: SnapState, records: Record<string, RecordDa
   return next
 }
 
-/** Mirrors app.ts navigateToDir(dir) for offline: ghListDir throws -> catch -> loadFromCache(dir). */
-async function navigateToDir(state: SnapState, records: Record<string, RecordData>, dir: string): Promise<SnapState> {
+/**
+ * Mirrors app.ts navigateToDir(dir). `requests` records the listing calls it
+ * makes: while the app has no live session to contradict the browser's
+ * `navigator.onLine === false`, it serves the cache record and issues none,
+ * instead of firing a request that can only fail and making the user wait for it
+ * to. With a live session the request is made anyway, and its failure still lands
+ * on the same record.
+ */
+async function navigateToDir(
+  state: SnapState,
+  records: Record<string, RecordData>,
+  dir: string,
+  requests: string[] = [],
+  net: { onLine?: boolean; connected?: boolean } = {},
+): Promise<SnapState> {
+  const { onLine = true, connected = false } = net
   const startPath = state.currentBrowsePath
-  // Simulate ghListDir throwing (offline).
+  // Mirrors app.ts shouldServeFromCache().
+  if (!onLine && !connected) return loadFromCache(state, records, dir || '')
+  requests.push(dir)
+  // Simulate ghListDir failing despite the browser saying we are online.
   try {
-    throw new Error('offline')
+    throw new Error('Failed to fetch')
   } catch {
     // navigateToDir catch: if path changed during fetch, bail.
     if (state.currentBrowsePath !== startPath) return state
@@ -353,6 +370,86 @@ describe('offline reopen — connect catch does not clobber a restored subdir', 
 })
 
 // =====================================================================
+// Offline navigation must not go out to the network. Going back, up, or
+// sideways in the sidebar used to fire a listing request that could only fail,
+// so the directory only appeared after that failure came back.
+// =====================================================================
+
+describe('navigating while offline', () => {
+  const RECORDS = { '(root)': ROOT, sub: SUBDIR }
+
+  it('going back to the parent reads the record and issues no request', async () => {
+    let state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
+    state = loadFromCache(state, RECORDS, 'sub')
+    assert.equal(state.currentBrowsePath, 'sub', 'precondition: inside the subdir')
+
+    const requests: string[] = []
+    state = await navigateToDir(state, RECORDS, '', requests, { onLine: false })
+
+    assert.deepEqual(requests, [], 'bug: a listing request was made while offline')
+    assert.equal(state.currentBrowsePath, '', 'the parent directory is shown')
+    assert.deepEqual(
+      state.notes.map(n => n.path),
+      ['root.md.gpg'],
+      "with the parent's own notes, not the subdir's",
+    )
+    assert.deepEqual(state.dirs, [{ name: 'sub', path: 'sub' }], 'and its folders, so it can be entered again')
+  })
+
+  it('a folder that was never cached leaves the view alone instead of hanging on a request', async () => {
+    let state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
+    state = loadFromCache(state, RECORDS, '(root)')
+    const requests: string[] = []
+
+    const after = await navigateToDir(state, RECORDS, 'never-visited', requests, { onLine: false })
+
+    assert.deepEqual(requests, [], 'no request either — the record would be the whole answer')
+    assert.deepEqual(after.notes, state.notes, 'nothing to show for it, so the current listing stands')
+    assert.equal(after.currentBrowsePath, '')
+  })
+
+  it('a cached but empty subdirectory is entered, not skipped', async () => {
+    const EMPTY = snapshot('sub/2024', [], ['march'])
+    const records = { ...RECORDS, 'sub/2024': EMPTY }
+    let state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
+    state = loadFromCache(state, records, 'sub')
+
+    const requests: string[] = []
+    state = await navigateToDir(state, records, 'sub/2024', requests, { onLine: false })
+
+    assert.deepEqual(requests, [])
+    assert.equal(state.currentBrowsePath, 'sub/2024', 'entered')
+    assert.equal(state.notes.length, 0)
+    assert.deepEqual(state.dirs, [{ name: 'march', path: 'sub/2024/march' }], 'and its subfolder is reachable')
+  })
+
+  it('a live session outranks a browser that keeps claiming we are offline', async () => {
+    // The app must never be stuck on a stale listing: a successful connect is
+    // proof the network is there, so navigation goes to it whatever the hint says.
+    const requests: string[] = []
+    let state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
+    state = loadFromCache(state, RECORDS, '(root)')
+
+    const after = await navigateToDir(state, RECORDS, 'sub', requests, { onLine: false, connected: true })
+
+    assert.deepEqual(requests, ['sub'], 'bug: a stale navigator.onLine would pin the app to the cache')
+    assert.equal(after.currentBrowsePath, 'sub', 'and a real remote change is still picked up')
+  })
+
+  it('a connected app asks the network, and its failure still lands on the record', async () => {
+    // navigator.onLine is a hint, not a probe: it only ever shortens the way.
+    const requests: string[] = []
+    let state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
+    state = loadFromCache(state, RECORDS, '(root)')
+
+    const after = await navigateToDir(state, RECORDS, 'sub', requests, { onLine: true })
+
+    assert.deepEqual(requests, ['sub'], 'the listing is requested, so a real change is picked up')
+    assert.equal(after.currentBrowsePath, 'sub', 'and the failed request still falls back to the record')
+  })
+})
+
+// =====================================================================
 // The OTHER clobber: doConnect SUCCESS unconditionally reset currentBrowsePath
 // to the configured root (line 311) and then closed the editor when the open
 // subdir note was absent from the root listing (lines 332-338). This is what
@@ -540,6 +637,18 @@ describe('offline reopen — loadFromCache edge cases', () => {
     const after = loadFromCache(state, {}, '(root)')
     assert.equal(after.notes.length, 0, 'no notes in empty cache')
     assert.equal(after.currentBrowsePath, '', 'browse path unchanged')
+  })
+
+  it('a cached but empty subdirectory is shown, not some other directory', () => {
+    // A folder holding only subfolders: its record exists and has no notes, which
+    // is an answer. Falling through to "the newest record" would answer a request
+    // for `sub/2024` with an unrelated directory's notes.
+    const EMPTY = snapshot('sub/2024', [], ['march'])
+    let state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
+    state = loadFromCache(state, { '(root)': ROOT, 'sub/2024': EMPTY }, 'sub/2024')
+    assert.equal(state.currentBrowsePath, 'sub/2024', 'the requested directory is the one loaded')
+    assert.equal(state.notes.length, 0)
+    assert.deepEqual(state.dirs, [{ name: 'march', path: 'sub/2024/march' }], 'its subfolder is still navigable')
   })
 })
 

@@ -1113,3 +1113,111 @@ describe('a warning that no longer applies', () => {
     assert.equal(outcome.pending?.path, 'other.md.gpg', 'not ours to clear')
   })
 })
+
+// =====================================================================
+// 13. A subdirectory must stay available offline, and so must its notes.
+// =====================================================================
+
+describe('opening a note in a subdirectory', () => {
+  const SUB_A = 'sub/a.md.gpg'
+  const SUB_B = 'sub/b.md.gpg'
+  const A = 'note a'
+  const B = 'note b'
+
+  /** The record the background walk left for `sub`: every note carries its blob. */
+  function walkedRecord(): Note[] {
+    return [
+      makeNote({ name: SUB_A, path: SUB_A, sha: 'sha-a', content: b64(A), baseText: A, baseSha: 'sha-a' }),
+      makeNote({ name: SUB_B, path: SUB_B, sha: 'sha-b', content: b64(B), baseText: B, baseSha: 'sha-b' }),
+    ]
+  }
+
+  /**
+   * Mirrors app.ts openNoteByPath(path) for a note in another directory:
+   * navigateToDir(dir, { prefetch: false }) — no prefetch, deliberately — then
+   * selectNote(path), persisting the dir's record on the way through (app.ts:859
+   * and app.ts:985).
+   */
+  function openInSubdir(origin: FakeOrigin, record: Note[], path: string, opts?: { prefetch: boolean }): AppState {
+    const listed = [SUB_A, SUB_B].map(p => {
+      const file = origin.get(p)!
+      return makeNote({ name: p, path: p, sha: file.sha, date: '', content: null })
+    })
+    const merged = applyLocalStatus(
+      mergeDirListing(listed, record, p => draftCache.has(p), opts),
+      p => draftCache.get(p),
+    )
+    return openNote({ ...initialState(), notes: merged }, path)
+  }
+
+  it('does not take the rest of the directory offline with it', () => {
+    const origin = new FakeOrigin()
+    origin.seed(SUB_A, A, 'sha-a')
+    origin.seed(SUB_B, B, 'sha-b')
+
+    // Opening A persists the record again; that write used to hold no ciphertext
+    // for B, so a reload offline could not decrypt it at all.
+    const state = openInSubdir(origin, walkedRecord(), SUB_A)
+    assert.equal(state.currentContent, A, 'A opened')
+
+    const reloaded = loadFromCache(cachedRecord(state))
+    assert.equal(reloaded.notes.length, 2, 'both notes are still listed')
+    assert.ok(
+      reloaded.notes.every(n => n.content !== null),
+      'every note in the directory is still readable with no network',
+    )
+    assert.equal(openNote(reloaded, SUB_B).currentContent, B, 'B opens straight from the record')
+  })
+
+  it('regression: without the restore, opening one note empties the whole directory', () => {
+    const origin = new FakeOrigin()
+    origin.seed(SUB_A, A, 'sha-a')
+    origin.seed(SUB_B, B, 'sha-b')
+
+    // The pre-fix merge: carry the base out of the record, drop its blobs.
+    const listed = [SUB_A, SUB_B].map(p => {
+      const file = origin.get(p)!
+      return makeNote({ name: p, path: p, sha: file.sha, date: '', content: null })
+    })
+    const merged = applyLocalStatus(carryBases(listed, walkedRecord()), p => draftCache.get(p))
+    const state = openNote({ ...initialState(), notes: merged }, SUB_A)
+
+    const reloaded = loadFromCache(cachedRecord(state))
+    assert.equal(
+      reloaded.notes.find(n => n.path === SUB_B)!.content,
+      null,
+      'bug: the listing carried no content and the record it overwrote held the only copy of B',
+    )
+  })
+
+  it('an ordinary directory visit still refetches a note whose remote moved on', () => {
+    const origin = new FakeOrigin()
+    origin.seed(SUB_A, A, 'sha-a')
+    origin.seed(SUB_B, B, 'sha-b')
+
+    // B changed on another device after the walk cached it.
+    const stale = walkedRecord()
+    stale[1] = { ...stale[1]!, sha: 'sha-b-old' }
+    origin.push(SUB_B, 'note b, changed elsewhere')
+
+    const state = prefetch(openInSubdir(origin, stale, SUB_A), origin)
+    const note = state.notes.find(n => n.path === SUB_B)!
+    assert.equal(note.sha, origin.get(SUB_B)!.sha, 'the fresh SHA wins')
+    assert.equal(note.content, origin.get(SUB_B)!.b64, 'and so does the payload — the stale copy is not shown')
+  })
+
+  it('the ⚠️ button still appears for a stale copy opened without a prefetch', () => {
+    const origin = new FakeOrigin()
+    origin.seed(SUB_A, A, 'sha-a')
+    origin.seed(SUB_B, B, 'sha-b')
+    const stale = walkedRecord()
+    stale[1] = { ...stale[1]!, sha: 'sha-b-old' }
+    draftCache.set(SUB_B, 'my edit to b')
+    origin.push(SUB_B, 'note b, changed elsewhere')
+
+    const state = openInSubdir(origin, stale, SUB_B)
+    const outcome = refreshOpenNote(state, origin)
+    assert.equal(outcome.flagged, true, 'the divergence is reported, not silently overwritten')
+    assert.equal(state.currentContent, 'my edit to b', 'the local edit is intact')
+  })
+})
