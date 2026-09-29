@@ -456,3 +456,40 @@ export function findMatchRanges(text: string, query: string): MatchRange[] {
   }
   return matches
 }
+
+export interface Crumb {
+  label: string
+  /** The directory to navigate to; null for the crumb that is the current one. */
+  dir: string | null
+}
+
+export const HOME_CRUMB = 'root'
+
+/**
+ * The breadcrumb trail: a `root` crumb for the app's root (the configured
+ * `ghPath`, or the repo root) followed by the folders below it. Every ancestor is
+ * a link, the current one is not.
+ *
+ * The root crumb is what makes the root one click away from any depth — without
+ * it the only way up is the sidebar's ".." link, one folder at a time, and at the
+ * root of a configured `ghPath` the trail starts mid-path with nothing above it.
+ * A word rather than a home icon, so the trail stays a list of folder names.
+ */
+export function breadcrumbCrumbs(currentBrowsePath: string, rootPath = ''): Crumb[] {
+  const root = rootPath || ''
+  const current = currentBrowsePath || ''
+  const rootParts = root.split('/').filter(Boolean)
+  const parts = current.split('/').filter(Boolean)
+  // A path cached under a different root setting is shown in full rather than
+  // sliced as if it lived below the current root.
+  const insideRoot = current === root || (root !== '' && current.startsWith(root + '/'))
+  const crumbs: Crumb[] = [{ label: HOME_CRUMB, dir: current === root ? null : root }]
+  const below = insideRoot ? parts.slice(rootParts.length) : parts
+  let accumulated = insideRoot ? root : ''
+  for (let i = 0; i < below.length; i++) {
+    const part = below[i]!
+    accumulated = accumulated ? `${accumulated}/${part}` : part
+    crumbs.push({ label: part, dir: i === below.length - 1 ? null : accumulated })
+  }
+  return crumbs
+}

@@ -73,24 +73,70 @@ export function carryBases(fresh: Note[], prev: Note[]): Note[] {
 }
 
 /**
+ * Hand a note back the blob the cache record still holds, when that blob IS the
+ * one the fresh listing names (same SHA). Restoring it is indistinguishable from
+ * a refetch — it saves a request and keeps the note readable with no network.
+ *
+ * This is what a subdirectory's offline copy is made of. The record is the only
+ * place a blob survives a reload, so anything that overwrites the record with a
+ * content-less listing (or with a prefetch that failed) must go through here first.
+ * A blob whose SHA has moved is deliberately NOT restored: it is stale, and
+ * presenting it as the note's content would hide a remote change.
+ */
+export function restoreStillCurrentBlobs(fresh: Note[], cached: Note[]): Note[] {
+  const byPath = new Map(cached.map(n => [n.path, n]))
+  return fresh.map(n => {
+    if (n.content) return n
+    const old = byPath.get(n.path)
+    if (!old?.content || old.sha !== n.sha) return n
+    return { ...n, content: old.content }
+  })
+}
+
+export interface MergeDirOptions {
+  /**
+   * Whether the caller refetches every note's blob afterwards (the normal
+   * directory refresh). `false` is the `openNoteByPath` path — opening a note in
+   * another directory, which must NOT prefetch — and there a stale blob is kept
+   * too: it is the last version we know of, the note stays openable offline, and
+   * the pull advances it to the real remote (or flags a divergence) from there.
+   */
+  prefetch?: boolean
+}
+
+/**
  * Merge a freshly parsed listing with the cache record of the directory it belongs
  * to. Needed whenever the listing comes from a directory other than the one
  * currently in `state.notes` (navigating into a subdir): the merge base lives in
  * the target dir's own record, so carrying it from the notes being left behind
  * would silently drop it.
  *
- * A note with an active draft also gets its previously cached blob back. The
- * prefetch deliberately skips drafted notes, so without this the note would carry
- * no content at all — and with no content there is nothing to decrypt into a base,
- * nothing for "discard" to revert to, and the divergence cannot be detected until
- * the user reloads.
+ * The cached blob comes back with it, and that is what keeps a subdirectory
+ * usable offline — the listing carries no content of its own, so dropping the blob
+ * here would empty the directory's offline copy (and the record the caller writes
+ * next would persist that emptiness for every sibling of the note being opened).
+ * Two cases qualify:
+ *   - a note with an active draft, which the prefetch deliberately skips, so its
+ *     pre-edit blob is the only thing there is to decrypt a base from, for
+ *     "discard" to revert to, and for the divergence to be detectable at all;
+ *   - a note whose cached blob is still the remote's blob (see
+ *     restoreStillCurrentBlobs), which needs no refetch to be right.
  */
-export function mergeDirListing(listed: Note[], cached: Note[], hasDraft: (path: string) => boolean): Note[] {
+export function mergeDirListing(
+  listed: Note[],
+  cached: Note[],
+  hasDraft: (path: string) => boolean,
+  opts: MergeDirOptions = {},
+): Note[] {
+  const keepStale = opts.prefetch === false
   const byPath = new Map(cached.map(n => [n.path, n]))
-  return carryBases(listed, cached).map(n => {
+  return carryBases(restoreStillCurrentBlobs(listed, cached), cached).map(n => {
     const old = byPath.get(n.path)
-    if (!old?.content || !hasDraft(n.path)) return n
-    return { ...n, content: old.content, sha: old.sha ?? n.sha }
+    if (!old?.content) return n
+    if (hasDraft(n.path) || (keepStale && old.sha !== n.sha)) {
+      return { ...n, content: old.content, sha: old.sha ?? n.sha }
+    }
+    return n
   })
 }
 

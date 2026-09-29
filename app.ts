@@ -46,6 +46,7 @@ import {
   listCachedNotePaths,
   pickBestCachedRecord,
   findMatchRanges,
+  breadcrumbCrumbs,
   withTimeout,
   saveLastNotePath,
   getLastNotePath,
@@ -126,13 +127,40 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
+/**
+ * `navigator.onLine` is a hint, not a probe: `false` is worth believing (no
+ * interface route, airplane mode), `true` is not. So this only ever shortens
+ * the way — when it says we are offline the app serves the cache and skips the
+ * request, and when it is wrong the caller's own error handling still covers it.
+ */
+function isOffline(): boolean {
+  return typeof navigator !== 'undefined' && navigator.onLine === false
+}
+
+/**
+ * Whether a directory can be served straight from its cache record. That takes
+ * BOTH the browser saying we are offline AND the app having no live session: a
+ * connect that succeeded is proof the network is there, so a stale or wrong
+ * `onLine` can never pin the app to a stale listing. Every way back — the
+ * background connect at startup, 🔄 Sync, the `online` listener — sets that
+ * session, so the app is never stuck showing the cache while online.
+ */
+function shouldServeFromCache(): boolean {
+  return isOffline() && !state.connected
+}
+
 function closestOf<T extends Element>(target: EventTarget | null, selector: string): T | null {
   return target instanceof Element ? target.closest<T>(selector) : null
 }
 
 async function loadFromCache(path: string, extraState: Partial<AppState> = {}) {
   let cached = await loadCachedNotes(path || '')
-  if (!cached || !cached.notes || !cached.notes.length) {
+  // A record that EXISTS is the answer for this directory, even when it holds no
+  // notes — that is what a folder with only subfolders in it looks like, and it
+  // still carries the subfolders to navigate into. Only a MISSING record falls
+  // back to the most recently cached one, so an empty (or not-yet-walked)
+  // subdirectory can never be answered with some other directory's notes.
+  if (!cached) {
     const candidates = await listCachedNotePaths()
     const records: Array<CachedRecord | null> = []
     for (const key of candidates) {
@@ -140,12 +168,12 @@ async function loadFromCache(path: string, extraState: Partial<AppState> = {}) {
     }
     cached = pickBestCachedRecord(records)
   }
-  if (!cached || !cached.notes || !cached.notes.length) return false
+  if (!cached) return false
   // The record carries each note's merge base, so the offline view knows exactly
   // what the remote looked like when it was cached. `dirty` is re-derived from
   // that base: a note that was merely opened (draft written on navigation, text
   // identical to the base) is not modified and must not be badged as such.
-  const notes = applyLocalStatus(cached.notes, p => draftCache.get(p))
+  const notes = applyLocalStatus(cached.notes || [], p => draftCache.get(p))
   for (const n of notes) {
     if (n.content) contentCache.set(n.path, n.content)
   }
@@ -715,25 +743,14 @@ function setConnectionStatus(text: string, connected: boolean) {
 
 function renderBreadcrumb() {
   const el = byEl<HTMLElement>('breadcrumb')
-  const current = state.currentBrowsePath
-  const parts = current ? current.split('/').filter(Boolean) : []
-  if (parts.length === 0) {
-    el.textContent = current ? '/' : ''
-    return
-  }
-  let html = ''
-  let accumulated = ''
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i]!
-    accumulated = accumulated ? accumulated + '/' + part : part
-    const label = escHtml(part)
-    if (i === parts.length - 1) {
-      html += `<span style="color:var(--text);font-weight:500;">${label}</span>`
-    } else {
-      html += `<a href="#" data-dir="${escAttr(accumulated)}" style="color:var(--accent)">${label}</a><span style="color:var(--text-muted);margin:0 4px;">/</span>`
-    }
-  }
-  el.innerHTML = html
+  const crumbs = breadcrumbCrumbs(state.currentBrowsePath, state.config.ghPath || '')
+  el.innerHTML = crumbs
+    .map((c, i) => {
+      const sep = i < crumbs.length - 1 ? '<span style="color:var(--text-muted);margin:0 4px;">/</span>' : ''
+      if (c.dir === null) return `<span style="color:var(--text);font-weight:500;">${escHtml(c.label)}</span>${sep}`
+      return `<a href="#" data-dir="${escAttr(c.dir)}" title="Go to ${escAttr(c.dir || 'the root folder')}" style="color:var(--accent)">${escHtml(c.label)}</a>${sep}`
+    })
+    .join('')
 }
 
 // ============= RENDER NOTE LIST =============
@@ -743,7 +760,13 @@ function renderNoteList() {
   syncRemoteRefreshBtn()
 
   if (state.dirs.length === 0 && state.notes.length === 0) {
-    const msg = state.connected ? 'Empty directory' : 'Configure your repo in settings to get started'
+    // An empty listing while offline means this folder has nothing cached, which
+    // is not the same as "the app is not configured".
+    const msg = state.connected
+      ? 'Empty directory'
+      : state.config.ghToken
+        ? 'Nothing cached for this folder'
+        : 'Configure your repo in settings to get started'
     list.innerHTML = `<div class="empty-state"><div class="icon">📁</div><p>${msg}</p></div>`
     return
   }
@@ -815,6 +838,19 @@ async function openNoteByPath(path: string) {
   }
 }
 
+/**
+ * Navigate straight to the cache record for `dirPath`. That record is the
+ * directory as it looked when we last had a connection — its notes, their blobs
+ * and their merge bases — so with no network there is nothing a listing request
+ * could add, only a failure to wait through first. Returns false when the
+ * directory has never been cached.
+ */
+async function navigateToCachedDir(dirPath: string): Promise<boolean> {
+  state = { ...state, currentFile: null, isDirty: false }
+  closeEditor()
+  return loadFromCache(dirPath || '')
+}
+
 async function navigateToDir(dirPath: string, opts: { prefetch?: boolean } = {}) {
   const { prefetch = true } = opts
   const dirtyFile = state.currentFile
@@ -823,9 +859,20 @@ async function navigateToDir(dirPath: string, opts: { prefetch?: boolean } = {})
     closeEditor()
   }
 
-  setConnectionStatus('Loading...', state.connected)
   const c = state.config
   const startPath = state.currentBrowsePath
+
+  // Offline: go back, up, or sideways through the sidebar straight from the
+  // cache instead of firing a request that can only fail. The `online` listener
+  // reconnects (and refreshes the open note) when the network is back.
+  if (shouldServeFromCache()) {
+    if (!(await navigateToCachedDir(dirPath))) {
+      setConnectionStatus('Offline · nothing cached for this folder', false)
+    }
+    return
+  }
+
+  setConnectionStatus('Loading...', state.connected)
 
   try {
     const entries = await ghListDir(state.config, dirPath || '')
@@ -842,7 +889,7 @@ async function navigateToDir(dirPath: string, opts: { prefetch?: boolean } = {})
     // carrying from `state.notes` would match nothing and silently drop both.
     const cached = await loadCachedNotes(dirPath || '')
     const merged = applyLocalStatus(
-      mergeDirListing(listed, cached?.notes ?? [], p => draftCache.has(p)),
+      mergeDirListing(listed, cached?.notes ?? [], p => draftCache.has(p), { prefetch }),
       p => draftCache.get(p),
     )
     state = { ...state, dirs, notes: merged, currentBrowsePath: dirPath, currentFile: null, isDirty: false }
@@ -860,9 +907,7 @@ async function navigateToDir(dirPath: string, opts: { prefetch?: boolean } = {})
   } catch (e) {
     if (state.currentBrowsePath !== startPath) return
     console.error('Directory navigation error:', e)
-    state = { ...state, currentFile: null, isDirty: false }
-    closeEditor()
-    if (!(await loadFromCache(dirPath || ''))) {
+    if (!(await navigateToCachedDir(dirPath))) {
       setConnectionStatus(`Error: ${errMsg(e)}`, false)
       toast(errMsg(e), 'error')
     }
@@ -961,6 +1006,10 @@ async function selectNote(path: string) {
   try {
     // Fetch from GitHub if not cached
     if (!note.content) {
+      // Nothing cached means nothing to decrypt: asking GitHub offline can only
+      // fail, so say what is actually wrong instead of reporting a network error.
+      if (shouldServeFromCache())
+        throw new Error('This note is not available offline — it was never cached on this device')
       const data = await ghGetFile(state.config, note.path)
       if (!data) throw new Error('File not found')
       if (state.currentFile?.path !== note.path) return

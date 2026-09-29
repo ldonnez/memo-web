@@ -1,6 +1,6 @@
 import { draftCache, contentCache } from './draft.ts'
 import { arrayToBase64, cacheNotesToLocalStorage, loadCachedNotes } from './util.ts'
-import { carryBases } from './sync.ts'
+import { carryBases, restoreStillCurrentBlobs } from './sync.ts'
 import type { Config, Dir, DirWithType, GhFileData, GhFileEntry, Note } from './types.ts'
 
 export interface EntriesResult {
@@ -311,7 +311,16 @@ export async function walkAllDirsAndPrefetch(
       // refreshed). Re-reading the record keeps the base across a background
       // walk, which rebuilds every note object from a fresh listing.
       const existing = await loadCachedNotes(dir)
-      const merged = carryBases(withBaselines, existing?.notes ?? [])
+      const prev = existing?.notes ?? []
+      // The record about to be overwritten is the only place a blob survives a
+      // reload, and a prefetch that failed (offline blip, rate limit) leaves the
+      // note content-less — so the write would silently drop the directory's
+      // offline copy. Hand back the blobs that are still the remote's.
+      const restored = restoreStillCurrentBlobs(withBaselines, prev)
+      const merged = carryBases(restored, prev)
+      for (const n of merged) {
+        if (n.content) contentCache.set(n.path, n.content)
+      }
       await cacheNotesToLocalStorage(
         merged,
         entries.filter((e): e is DirWithType => e.type === 'dir').map(e => ({ name: e.name, path: e.path })),
