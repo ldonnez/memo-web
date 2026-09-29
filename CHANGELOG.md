@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.4](https://github.com/ldonnez/memo-web/compare/v0.7.3...v0.7.4) (2026-09-29)
+
+
+### Bug Fixes
+
+* ensure offline subdir navigation ([75504d8](https://github.com/ldonnez/memo-web/commit/75504d8f67a862b01c12d23c3d1c26381bd04577))
+
 ## [0.7.3](https://github.com/ldonnez/memo-web/compare/v0.7.2...v0.7.3) (2026-09-26)
 
 
