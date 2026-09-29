@@ -6,6 +6,7 @@ import {
   adoptBase,
   carryBases,
   mergeDirListing,
+  restoreStillCurrentBlobs,
   localWorkingText,
   isModified,
   applyLocalStatus,
@@ -196,6 +197,83 @@ describe('mergeDirListing', () => {
     assert.notEqual(note.content, null, 'a note the prefetch skipped must not stay content-less')
     // With content + base + draft, the pull can reach a verdict without guessing.
     assert.equal(planPull({ base: baseOf(note), remoteSha: 'sha-new', working: LOCAL }), 'conflict')
+  })
+
+  // A subdirectory's offline copy IS the blobs in its cache record, so a listing
+  // that carries no content of its own must not leave them behind: the record the
+  // caller writes next would then hold no ciphertext at all, and every sibling of
+  // the note being opened becomes unopenable with no network.
+  const current = [makeNote({ path: 'sub/c.md.gpg', content: 'b64-c', sha: 'sha-c', baseText: B, baseSha: 'sha-c' })]
+  const listedCurrent = [makeNote({ path: 'sub/c.md.gpg', sha: 'sha-c', content: null })]
+
+  it('restores a blob the fresh listing still names, whatever the prefetch is doing', () => {
+    for (const prefetch of [true, false]) {
+      const merged = mergeDirListing(listedCurrent, current, () => false, { prefetch })
+      assert.equal(merged[0]!.content, 'b64-c', `prefetch: ${prefetch} — a refetch would return this blob anyway`)
+      assert.equal(merged[0]!.sha, 'sha-c')
+    }
+  })
+
+  it('leaves a stale blob for the prefetch to replace', () => {
+    const merged = mergeDirListing(listed, cached, () => false, { prefetch: true })
+    assert.equal(merged[0]!.content, null, 'the remote has moved on, so the old blob must not be shown as its content')
+    assert.equal(merged[0]!.sha, 'sha-new')
+  })
+
+  it('keeps even a stale blob when nothing will be prefetched (openNoteByPath)', () => {
+    // The offline copy the walk left, and the last version we know of. The pull
+    // then advances it to the real remote, or flags a divergence — from the base.
+    const merged = mergeDirListing(listed, cached, () => false, { prefetch: false })
+    assert.deepEqual(
+      merged.map(n => [n.content, n.sha]),
+      [
+        ['b64-pre-edit', 'sha-old'],
+        ['b64-b', 'sha-b'],
+      ],
+      'both notes stay readable offline, each labelled with the blob it holds',
+    )
+    assert.deepEqual(baseOf(merged[0]!), { text: B, sha: 'sha-old' }, 'the base still tracks what was last synced')
+  })
+})
+
+// =====================================================================
+// The blob a cache record still holds is the only thing that makes a note
+// openable with no network, so anything about to overwrite that record has to
+// hand it back first (a listing that did not prefetch, a prefetch that failed).
+// =====================================================================
+
+describe('restoreStillCurrentBlobs', () => {
+  it('hands back a blob the listing still names', () => {
+    const restored = restoreStillCurrentBlobs(
+      [makeNote({ path: 'sub/a.md.gpg', sha: 'sha-a', content: null })],
+      [makeNote({ path: 'sub/a.md.gpg', sha: 'sha-a', content: 'b64-a' })],
+    )
+    assert.equal(restored[0]!.content, 'b64-a')
+    assert.equal(restored[0]!.sha, 'sha-a', 'same blob, so the SHA is untouched')
+  })
+
+  it('refuses a blob whose SHA has moved — that copy is stale, not the note', () => {
+    const restored = restoreStillCurrentBlobs(
+      [makeNote({ path: 'sub/a.md.gpg', sha: 'sha-new', content: null })],
+      [makeNote({ path: 'sub/a.md.gpg', sha: 'sha-old', content: 'b64-old' })],
+    )
+    assert.equal(restored[0]!.content, null)
+  })
+
+  it('never overwrites a blob the prefetch already fetched', () => {
+    const restored = restoreStillCurrentBlobs(
+      [makeNote({ path: 'sub/a.md.gpg', sha: 'sha-a', content: 'b64-fresh' })],
+      [makeNote({ path: 'sub/a.md.gpg', sha: 'sha-a', content: 'b64-a' })],
+    )
+    assert.equal(restored[0]!.content, 'b64-fresh')
+  })
+
+  it('does nothing for a path the record does not know', () => {
+    const listed = [makeNote({ path: 'sub/new.md.gpg', sha: 'sha-n', content: null })]
+    assert.deepEqual(
+      restoreStillCurrentBlobs(listed, [makeNote({ path: 'sub/other.md.gpg', content: 'b64-x' })]),
+      listed,
+    )
   })
 })
 
