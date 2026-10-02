@@ -424,9 +424,72 @@ export async function computeCachedTotals(): Promise<{ totalNotes: number; total
   }
 }
 
-export function formatNoteItem(note: Note, activePath: string | undefined): string {
+/** The suffix a new note is written with: the armored blob, nothing else. */
+export const DEFAULT_NOTE_EXT = '.asc'
+/** What earlier versions wrote: still listed, opened and saved — never written. */
+export const LEGACY_NOTE_EXTS = ['.md.asc', '.md.gpg']
+/** Both armored tails, since gpg writes either one. */
+const ARMORED_NOTE_EXTS = ['.asc', '.gpg']
+
+/**
+ * Every suffix a note file may have: the configured one, then both armored tails
+ * and the legacy `.md.asc` / `.md.gpg`. All of them stay recognisable forever,
+ * because a repo full of legacy notes must keep working while new ones are
+ * written as `.asc` — filtering on a single suffix would hide the entire
+ * existing repo.
+ *
+ * A bare `.asc` / `.gpg` is also what `gpg --export -a KEYID` writes, so such a
+ * file is a note *candidate* and can only be told apart once it is opened: that
+ * is the one thing `isNoteName` cannot do from a listing, which carries no
+ * content. `isArmoredKey()` in `lib/crypto.ts` rejects the key blocks there.
+ */
+export function noteExtensions(fileExt?: string): string[] {
+  const exts = [fileExt, ...ARMORED_NOTE_EXTS, ...LEGACY_NOTE_EXTS]
+  return [...new Set(exts.map(e => (e || '').trim()).filter(Boolean))]
+}
+
+/** Whether a directory entry is an encrypted note we can list. */
+export function isNoteName(name: string, fileExt?: string): boolean {
+  return noteExtensions(fileExt).some(ext => name.endsWith(ext))
+}
+
+/**
+ * The name to show in the sidebar: the file name minus its suffix. Longer
+ * suffixes are stripped first, so `note.md.asc` becomes `note` and not `note.md`.
+ */
+export function noteDisplayName(name: string, fileExt?: string): string {
+  const tails = [...noteExtensions(fileExt)].sort((a, b) => b.length - a.length)
+  for (const tail of tails) {
+    if (name.length > tail.length && name.endsWith(tail)) return name.slice(0, -tail.length)
+  }
+  return name
+}
+
+/**
+ * The name a new note is *called* — what the sidebar shows and what a typed name
+ * is reduced to before it seeds the body. Every suffix goes: the app appends the
+ * configured one to the file name anyway, so `test.asc` must not seed
+ * `# test.asc`, and `.md` only ever marked the old `.md.asc` naming, so `test.md`
+ * is the note `test` too.
+ */
+export function noteNameFromInput(input: string, fileExt?: string): string {
+  const trimmed = input.trim()
+  return noteDisplayName(trimmed.replace(/\.md$/i, ''), fileExt) || trimmed
+}
+
+/**
+ * The file a new note is written to: the typed name with the configured suffix
+ * appended once. `test.md` keeps its `.md` (`test.md.asc`) — the user asked for
+ * that name — while `test.asc` must not become `test.asc.asc`.
+ */
+export function noteFileName(input: string, ext: string): string {
+  const trimmed = input.trim()
+  return trimmed.endsWith(ext) ? trimmed : `${trimmed}${ext}`
+}
+
+export function formatNoteItem(note: Note, activePath: string | undefined, fileExt?: string): string {
   const active = activePath === note.path
-  const name = note.name.replace(/\.md\.gpg$/, '').replace(/\.gpg$/, '')
+  const name = noteDisplayName(note.name, fileExt)
   const cached = !!note.content
   return `<div class="note-item ${active ? 'active' : ''}" data-path="${escAttr(note.path)}" data-type="file">
       <span class="name">📄 ${escHtml(name)}${note.dirty ? ' *' : ''}</span>

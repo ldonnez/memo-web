@@ -1,5 +1,5 @@
 import { draftCache, contentCache } from './draft.ts'
-import { arrayToBase64, cacheNotesToLocalStorage, loadCachedNotes } from './util.ts'
+import { arrayToBase64, cacheNotesToLocalStorage, isNoteName, loadCachedNotes } from './util.ts'
 import { carryBases, restoreStillCurrentBlobs } from './sync.ts'
 import type { Config, Dir, DirWithType, GhFileData, GhFileEntry, Note } from './types.ts'
 
@@ -17,7 +17,7 @@ export function parseEntries(
     size?: number
     last_modified?: string | null
   }>,
-  ext: string,
+  ext?: string,
 ): EntriesResult {
   return {
     dirs: entries
@@ -27,7 +27,7 @@ export function parseEntries(
     notes: entries
       .filter(
         (i): i is typeof i & { type: 'file'; name: string; path: string; sha: string; size: number } =>
-          i.type === 'file' && !!i.name && i.name.endsWith(ext),
+          i.type === 'file' && !!i.name && isNoteName(i.name, ext),
       )
       .map(i => ({
         name: i.name!,
@@ -260,7 +260,7 @@ export function restoreDraftBaselines(notes: Note[]): Note[] {
 export async function walkAllDirsAndPrefetch(
   config: Config,
   rootPath: string,
-  fileExt: string,
+  fileExt?: string,
 ): Promise<{ totalNotes: number; totalDirs: number }> {
   const dirs: string[] = [rootPath || '']
   const seen = new Set<string>()
@@ -281,7 +281,7 @@ export async function walkAllDirsAndPrefetch(
         if (item.type === 'dir') {
           dirs.push(item.path)
           totalDirs++
-        } else if (item.type === 'file' && item.name.endsWith(fileExt)) {
+        } else if (item.type === 'file' && isNoteName(item.name, fileExt)) {
           files.push(item as GhFileEntry & { type: 'file' })
         }
       }

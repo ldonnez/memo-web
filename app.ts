@@ -47,6 +47,12 @@ import {
   pickBestCachedRecord,
   findMatchRanges,
   breadcrumbCrumbs,
+  noteDisplayName,
+  noteExtensions,
+  noteNameFromInput,
+  noteFileName,
+  DEFAULT_NOTE_EXT,
+  LEGACY_NOTE_EXTS,
   withTimeout,
   saveLastNotePath,
   getLastNotePath,
@@ -225,6 +231,13 @@ function loadConfig() {
     const saved = localStorage.getItem('memoweb_config')
     if (saved) state = { ...state, config: JSON.parse(saved) }
   } catch {}
+  // A stored suffix that is only an earlier *default* follows the default: the
+  // notes it wrote are still listed and saved as they are, so the upgrade is
+  // invisible except that new notes get the shorter name. Any other suffix is
+  // the user's own choice and is left alone.
+  if (LEGACY_NOTE_EXTS.includes((state.config.fileExt || '').trim())) {
+    state = { ...state, config: { ...state.config, fileExt: DEFAULT_NOTE_EXT } }
+  }
   const owner = getUrlParam('owner')
   const repo = getUrlParam('repo')
   const branch = getUrlParam('branch')
@@ -248,7 +261,7 @@ function applyConfigToUI() {
   byEl<HTMLInputElement>('ghRepo').value = c.ghRepo || ''
   byEl<HTMLInputElement>('ghBranch').value = c.ghBranch || 'main'
   byEl<HTMLInputElement>('ghPath').value = c.ghPath || ''
-  byEl<HTMLInputElement>('fileExt').value = c.fileExt || '.md.gpg'
+  byEl<HTMLInputElement>('fileExt').value = c.fileExt || DEFAULT_NOTE_EXT
   byEl<HTMLInputElement>('cryptoMode').value = c.cryptoMode || 'key'
   byEl<HTMLInputElement>('publicKey').value = c.publicKey || ''
   byEl<HTMLInputElement>('privateKey').value = c.privateKey || ''
@@ -266,7 +279,7 @@ function saveConfigToState() {
       ghRepo: byEl<HTMLInputElement>('ghRepo').value.trim(),
       ghBranch: byEl<HTMLInputElement>('ghBranch').value.trim() || 'main',
       ghPath: byEl<HTMLInputElement>('ghPath').value.trim(),
-      fileExt: byEl<HTMLInputElement>('fileExt').value.trim() || '.md.gpg',
+      fileExt: byEl<HTMLInputElement>('fileExt').value.trim() || DEFAULT_NOTE_EXT,
       cryptoMode: byEl<HTMLSelectElement>('cryptoMode').value as 'key' | 'password',
       publicKey: byEl<HTMLInputElement>('publicKey').value.trim(),
       privateKey: byEl<HTMLInputElement>('privateKey').value.trim(),
@@ -341,7 +354,7 @@ async function connect(background = false) {
 
 async function doConnect(c: Config, signal: AbortSignal) {
   const path = c.ghPath || ''
-  const ext = c.fileExt || '.md.gpg'
+  const ext = c.fileExt || DEFAULT_NOTE_EXT
   const startPath = state.currentBrowsePath
   console.log('Connecting to', `${c.ghOwner}/${c.ghRepo}`, 'path:', path, 'branch:', c.ghBranch)
 
@@ -542,8 +555,8 @@ function adoptRemoteContent(openFile: Note, content: string, decrypted: string, 
   // The note is clean against its new base, so the editor chrome must agree: the
   // 'up-to-date' path reaches here from a dirty editor whose edit the remote
   // already had, and a still-enabled Save would push the same text again.
-  byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
-  byEl<HTMLElement>('discardBtn').style.visibility = 'hidden'
+  renderEditorHeader(false)
+  byEl<HTMLButtonElement>('discardBtn').style.visibility = 'hidden'
   byEl<HTMLButtonElement>('saveBtn').disabled = true
   return cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
 }
@@ -635,7 +648,7 @@ async function applyPendingRemoteRefresh() {
     // The base moved to the remote: persist it, or the background walk restores
     // the old one and the next load starts the divergence dance again.
     await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
-    byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
+    renderEditorHeader(false)
     byEl<HTMLButtonElement>('discardBtn').style.visibility = 'hidden'
     byEl<HTMLElement>('editorStatus').textContent = ''
     byEl<HTMLButtonElement>('saveBtn').disabled = true
@@ -660,7 +673,7 @@ async function pullChanges() {
   }
 
   const currentPath = state.currentBrowsePath
-  const ext = c.fileExt || '.md.gpg'
+  const ext = c.fileExt || DEFAULT_NOTE_EXT
   const token = state.currentBrowsePath + '|' + (state.currentFile?.path || '')
 
   setConnectionStatus('Syncing...', state.connected)
@@ -791,7 +804,7 @@ function renderNoteList() {
 
   // Then files
   state.notes.forEach(n => {
-    items.push(formatNoteItem(n, state.currentFile?.path))
+    items.push(formatNoteItem(n, state.currentFile?.path, state.config.fileExt))
   })
 
   list.innerHTML = items.join('')
@@ -882,7 +895,7 @@ async function navigateToDir(dirPath: string, opts: { prefetch?: boolean } = {})
       return
     }
 
-    const ext = c.fileExt || '.md.gpg'
+    const ext = c.fileExt || DEFAULT_NOTE_EXT
     const { dirs, notes: listed } = parseEntries(entries, ext)
     // The merge base (and the pre-edit blob of a drafted note) live in the TARGET
     // directory's own cache record, not in the notes we are navigating away from —
@@ -931,7 +944,7 @@ async function selectNote(path: string) {
 
   byEl<HTMLElement>('placeholder').style.display = 'none'
   byEl<HTMLElement>('editor').style.display = 'flex'
-  byEl<HTMLElement>('editorFilename').textContent = note.name
+  renderEditorHeader(false)
 
   const draft = draftCache.get(note.path)
   if (draft !== undefined) {
@@ -985,7 +998,7 @@ async function selectNote(path: string) {
         originalContent: baseline,
         isDirty: true,
       }
-      byEl<HTMLElement>('editorDirty').style.visibility = 'visible'
+      renderEditorHeader(true)
       byEl<HTMLButtonElement>('discardBtn').style.visibility = 'visible'
       byEl<HTMLElement>('editorStatus').textContent = ''
       byEl<HTMLButtonElement>('saveBtn').disabled = false
@@ -996,7 +1009,7 @@ async function selectNote(path: string) {
     }
   }
 
-  byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
+  renderEditorHeader(false)
   byEl<HTMLElement>('editorStatus').textContent = 'Decrypting...'
   state = { ...state, originalContent: '' }
   setContent('')
@@ -1134,6 +1147,17 @@ document.addEventListener('DOMContentLoaded', () => {
   })
 })
 
+/**
+ * The header is a view of state, never written ad hoc: setContent() dispatches a
+ * change whose listener runs synchronously, so anything that renders the header
+ * before `currentFile` exists gets overwritten with an empty name — which is
+ * exactly what happened to a freshly created note.
+ */
+function renderEditorHeader(dirty = state.isDirty) {
+  byEl<HTMLElement>('editorFilename').textContent = state.currentFile?.name ?? ''
+  byEl<HTMLElement>('editorDirty').style.visibility = dirty ? 'visible' : 'hidden'
+}
+
 function onEditorInput() {
   const newContent = getContent()
   const result = computeDirtyState(state.notes, state.currentFile, newContent, state.originalContent)
@@ -1148,21 +1172,10 @@ function onEditorInput() {
     if (result.isDirty) saveDraft(state.currentFile.path, newContent)
     else removeDraft(state.currentFile.path)
   }
-  const filenameEl = byEl<HTMLElement>('editorFilename')
-  const dirtyEl = byEl<HTMLElement>('editorDirty')
-  const baseName = state.currentFile ? state.currentFile.name : ''
   byEl<HTMLButtonElement>('saveBtn').disabled = !result.isDirty
-  if (result.isDirty) {
-    byEl<HTMLElement>('editorStatus').textContent = ''
-    byEl<HTMLButtonElement>('discardBtn').style.visibility = 'visible'
-    filenameEl.textContent = baseName
-    dirtyEl.style.visibility = 'visible'
-  } else {
-    byEl<HTMLElement>('editorStatus').textContent = ''
-    byEl<HTMLButtonElement>('discardBtn').style.visibility = 'hidden'
-    filenameEl.textContent = baseName
-    dirtyEl.style.visibility = 'hidden'
-  }
+  byEl<HTMLElement>('editorStatus').textContent = ''
+  byEl<HTMLButtonElement>('discardBtn').style.visibility = result.isDirty ? 'visible' : 'hidden'
+  renderEditorHeader(result.isDirty)
   renderNoteList()
   if (state.showPreview) updatePreview(false)
 }
@@ -1447,8 +1460,12 @@ async function saveNote() {
 
     toast('Note saved successfully', 'success')
     clearRemoteRefresh()
-    byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
+    renderEditorHeader(false)
     byEl<HTMLButtonElement>('discardBtn').style.visibility = 'hidden'
+    // A freshly created note had no blob to delete, so newNote() disables this —
+    // and only selectNote() ever turns it back on. The note exists now, with the
+    // sha the PUT returned, so the button has to follow the state.
+    byEl<HTMLButtonElement>('deleteBtn').disabled = false
     btn.disabled = true
     renderNoteList()
   } catch (e) {
@@ -1474,17 +1491,33 @@ async function newNote() {
     saveDraft(state.currentFile.path, state.currentContent)
   }
 
-  const name = prompt('Note name (e.g., my-note):')
-  if (!name || !name.trim()) return
+  const typed = (prompt('Note name (e.g., my-note):') ?? '').trim()
+  if (!typed) return
 
-  const ext = state.config.fileExt || '.md.gpg'
+  const ext = state.config.fileExt || DEFAULT_NOTE_EXT
   const dir = state.currentBrowsePath || state.config.ghPath || ''
-  const path = dir ? `${dir}/${name.trim()}${ext}` : `${name.trim()}${ext}`
+  // The file is the name as typed, with the configured suffix appended once: type
+  // `test.md` and you get `test.md.asc`, type `test.asc` and you get `test.asc`.
+  const fileName = noteFileName(typed, ext)
+  // The heading is the note's *name*, so it drops every suffix — `test.md` and
+  // `test.asc` both seed `# test`.
+  const stem = noteNameFromInput(typed, state.config.fileExt)
+  const path = dir ? `${dir}/${fileName}` : fileName
 
-  // Check if exists
-  const existing = await ghGetFile(state.config, path)
-  if (existing) {
-    toast('A note with this name already exists', 'error')
+  // Check if exists — under *every* suffix a note may have, not just the one we
+  // are about to write. Otherwise creating `my-note` in a repo that already has
+  // `my-note.md.gpg` would silently add a second, shadowed note under a name that
+  // looks the same in the sidebar.
+  const clash = (
+    await Promise.all(
+      noteExtensions(state.config.fileExt).map(async ext => {
+        const p = dir ? `${dir}/${stem}${ext}` : `${stem}${ext}`
+        return (await ghGetFile(state.config, p)) ? p : null
+      }),
+    )
+  ).find((p): p is string => !!p)
+  if (clash) {
+    toast(`A note with this name already exists (${clash})`, 'error')
     return
   }
 
@@ -1492,11 +1525,9 @@ async function newNote() {
 
   byEl<HTMLElement>('placeholder').style.display = 'none'
   byEl<HTMLElement>('editor').style.display = 'flex'
-  byEl<HTMLElement>('editorFilename').textContent = `${name.trim()}${ext}`
-  byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
   clearRemoteRefresh()
   byEl<HTMLElement>('editorStatus').textContent = '🆕 New note'
-  setContent(`# ${name.trim()}\n\n`)
+  setContent(`# ${stem}\n\n`)
   byEl<HTMLButtonElement>('saveBtn').disabled = false
   byEl<HTMLButtonElement>('deleteBtn').disabled = true
   const currentContent = getContent()
@@ -1504,7 +1535,7 @@ async function newNote() {
 
   // Create a temporary note object and add to sidebar immediately
   const newNoteObj = {
-    name: `${name.trim()}${ext}`,
+    name: fileName,
     path: path,
     sha: null,
     size: 0,
@@ -1520,6 +1551,8 @@ async function newNote() {
     notes: [...state.notes, newNoteObj].sort((a, b) => a.name.localeCompare(b.name)),
   }
 
+  // Last: the header can only be rendered once `currentFile` names the note.
+  renderEditorHeader(true)
   renderNoteList()
   updatePreview()
 }
@@ -1618,11 +1651,7 @@ function sidebarSearch(query: string) {
   const extra: Array<{ path: string; name: string }> = []
   contentCache.forEach((_val, path) => {
     if (visiblePaths.has(path)) return
-    const name = path
-      .split('/')
-      .pop()!
-      .replace(/\.md\.gpg$/, '')
-      .replace(/\.gpg$/, '')
+    const name = noteDisplayName(path.split('/').pop()!, state.config.fileExt)
     if (name.toLowerCase().includes(q)) {
       extra.push({ path, name })
     }
