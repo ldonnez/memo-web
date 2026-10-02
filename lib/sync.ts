@@ -61,14 +61,20 @@ export function adoptBase(note: Note, text: string, sha: string | null): Note {
  * therefore to the ⚠️ button). The base is only ever advanced deliberately —
  * where we have decrypted the text — so a remote that moved on does NOT
  * invalidate it: a stale base is exactly the merge base we want.
+ *
+ * The note's own `cryptoMode` rides along for the same reason: a listing knows
+ * nothing about encryption, so dropping it would flip a passphrase note back to
+ * the app-wide mode and make it undecryptable after the next connect.
  */
 export function carryBases(fresh: Note[], prev: Note[]): Note[] {
   const byPath = new Map(prev.map(n => [n.path, n]))
   return fresh.map(n => {
     const old = byPath.get(n.path)
     if (!old) return n
-    if (old.baseText == null && old.baseSha == null) return n
-    return { ...n, baseText: old.baseText ?? null, baseSha: old.baseSha ?? null }
+    const mode = old.cryptoMode ?? n.cryptoMode
+    const carried = mode ? { ...n, cryptoMode: mode } : n
+    if (old.baseText == null && old.baseSha == null) return carried
+    return { ...carried, baseText: old.baseText ?? null, baseSha: old.baseSha ?? null }
   })
 }
 

@@ -112,7 +112,7 @@
         <div id="editor" style="display: none; flex-direction: column; flex: 1; overflow: hidden">
           <div class="editor-header">
             <div class="file-info">
-              <span class="filename" id="editorFilename">untitled.md.gpg</span
+              <span class="filename" id="editorFilename">untitled.asc</span
               ><span id="editorDirty" style="visibility: hidden">*</span>
               <span id="editorStatus" style="font-size: 12px; color: var(--text-muted)"></span>
               <button class="btn btn-sm" id="previewToggle">👁️ <span class="label">Preview</span></button>
@@ -290,7 +290,11 @@
           </div>
           <div class="form-group">
             <label>File Extension</label>
-            <input type="text" id="fileExt" placeholder=".md.gpg" value=".md.gpg" />
+            <input type="text" id="fileExt" placeholder=".asc" value=".asc" />
+            <div class="hint">
+              Used when creating new notes. Existing <code>.md.asc</code> and <code>.md.gpg</code> notes are still
+              listed and saved as they are.
+            </div>
           </div>
         </div>
 
@@ -330,6 +334,56 @@
         <div class="form-actions">
           <button class="btn" id="settingsCancelBtn">Cancel</button>
           <button class="btn btn-primary" id="settingsSaveBtn">Save & Connect</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- New Note Modal -->
+    <div class="modal-overlay" id="newNoteModal">
+      <div class="modal">
+        <h2>🆕 New note</h2>
+        <div class="form-group">
+          <label>Note name</label>
+          <input type="text" id="newNoteName" placeholder="my-note" autocomplete="off" autocapitalize="off" />
+        </div>
+        <div class="form-group">
+          <label>Encryption</label>
+          <select id="newNoteMode">
+            <option value="key">GPG Key (asymmetric)</option>
+            <option value="password">Passphrase (symmetric)</option>
+          </select>
+          <div class="hint">A passphrase note is encrypted with a passphrase chosen for this note alone.</div>
+        </div>
+        <div id="newNotePassGroup" style="display: none">
+          <div class="form-group">
+            <label>Passphrase</label>
+            <input type="password" id="newNotePassphrase" autocomplete="new-password" />
+          </div>
+          <div class="form-group">
+            <label>Confirm passphrase</label>
+            <input type="password" id="newNotePassphraseConfirm" autocomplete="new-password" />
+          </div>
+        </div>
+        <div class="field-error" id="newNoteError" style="display: none"></div>
+        <div class="form-actions">
+          <button class="btn" id="newNoteCancelBtn">Cancel</button>
+          <button class="btn btn-primary" id="newNoteCreateBtn">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Passphrase Modal -->
+    <div class="modal-overlay" id="passphraseModal">
+      <div class="modal">
+        <h2 id="passphraseTitle">🔒 Passphrase</h2>
+        <div class="form-group">
+          <label>Passphrase</label>
+          <input type="password" id="passphraseInput" autocomplete="current-password" />
+        </div>
+        <div class="field-error" id="passphraseError" style="display: none"></div>
+        <div class="form-actions">
+          <button class="btn" id="passphraseCancelBtn">Cancel</button>
+          <button class="btn btn-primary" id="passphraseUnlockBtn">Unlock</button>
         </div>
       </div>
     </div>

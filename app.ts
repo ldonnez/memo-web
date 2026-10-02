@@ -1,5 +1,13 @@
 import { encryptContent, decryptContent } from './lib/crypto.ts'
 import {
+  resolveNotePassphrase,
+  unlockWithPassphrase,
+  effectiveCryptoConfig,
+  validatePassphrasePair,
+  setNotePassphrase,
+  clearNotePassphrase,
+} from './lib/passphrase.ts'
+import {
   smartEnter,
   handleTab,
   handleShiftTab,
@@ -47,6 +55,12 @@ import {
   pickBestCachedRecord,
   findMatchRanges,
   breadcrumbCrumbs,
+  noteDisplayName,
+  noteExtensions,
+  noteNameFromInput,
+  noteFileName,
+  DEFAULT_NOTE_EXT,
+  LEGACY_NOTE_EXTS,
   withTimeout,
   saveLastNotePath,
   getLastNotePath,
@@ -225,6 +239,13 @@ function loadConfig() {
     const saved = localStorage.getItem('memoweb_config')
     if (saved) state = { ...state, config: JSON.parse(saved) }
   } catch {}
+  // A stored suffix that is only an earlier *default* follows the default: the
+  // notes it wrote are still listed and saved as they are, so the upgrade is
+  // invisible except that new notes get the shorter name. Any other suffix is
+  // the user's own choice and is left alone.
+  if (LEGACY_NOTE_EXTS.includes((state.config.fileExt || '').trim())) {
+    state = { ...state, config: { ...state.config, fileExt: DEFAULT_NOTE_EXT } }
+  }
   const owner = getUrlParam('owner')
   const repo = getUrlParam('repo')
   const branch = getUrlParam('branch')
@@ -248,7 +269,7 @@ function applyConfigToUI() {
   byEl<HTMLInputElement>('ghRepo').value = c.ghRepo || ''
   byEl<HTMLInputElement>('ghBranch').value = c.ghBranch || 'main'
   byEl<HTMLInputElement>('ghPath').value = c.ghPath || ''
-  byEl<HTMLInputElement>('fileExt').value = c.fileExt || '.md.gpg'
+  byEl<HTMLInputElement>('fileExt').value = c.fileExt || DEFAULT_NOTE_EXT
   byEl<HTMLInputElement>('cryptoMode').value = c.cryptoMode || 'key'
   byEl<HTMLInputElement>('publicKey').value = c.publicKey || ''
   byEl<HTMLInputElement>('privateKey').value = c.privateKey || ''
@@ -266,7 +287,7 @@ function saveConfigToState() {
       ghRepo: byEl<HTMLInputElement>('ghRepo').value.trim(),
       ghBranch: byEl<HTMLInputElement>('ghBranch').value.trim() || 'main',
       ghPath: byEl<HTMLInputElement>('ghPath').value.trim(),
-      fileExt: byEl<HTMLInputElement>('fileExt').value.trim() || '.md.gpg',
+      fileExt: byEl<HTMLInputElement>('fileExt').value.trim() || DEFAULT_NOTE_EXT,
       cryptoMode: byEl<HTMLSelectElement>('cryptoMode').value as 'key' | 'password',
       publicKey: byEl<HTMLInputElement>('publicKey').value.trim(),
       privateKey: byEl<HTMLInputElement>('privateKey').value.trim(),
@@ -305,6 +326,93 @@ async function saveSettings() {
   await connect()
 }
 
+// ============= PER-NOTE CRYPTO =============
+/**
+ * The encryption mode a note actually runs with: its own when it carries one
+ * (created with a passphrase, or explicitly with the key), the app-wide
+ * setting otherwise — which is every note from before per-note crypto existed.
+ */
+function noteCryptoMode(note: Note): 'key' | 'password' {
+  return note.cryptoMode ?? state.config.cryptoMode ?? 'key'
+}
+
+/**
+ * Config for a passphrase note's ENCRYPT side: session memory → settings
+ * passphrase → interactive prompt. Saving is a user action, so it may prompt;
+ * unlike decryption there is nothing to verify against on the way out.
+ */
+async function cryptoConfigFor(note: Note, interactive: boolean): Promise<Config> {
+  if (noteCryptoMode(note) !== 'password') return effectiveCryptoConfig(state.config, 'key')
+  const passphrase = await resolveNotePassphrase(
+    note.path,
+    state.config,
+    interactive ? { prompt: () => promptForPassphrase(note) } : {},
+  )
+  return effectiveCryptoConfig(state.config, 'password', passphrase)
+}
+
+/**
+ * Decrypt a note's bytes through its own mode. Passphrase notes go through
+ * unlockWithPassphrase, which tries the session copy, then the settings
+ * passphrase, then — only when `interactive` — the passphrase modal.
+ * Background refreshes pass `false` so a silent sync can never block on a
+ * dialog; their failure keeps falling into the existing console.warn.
+ */
+async function decryptForNote(note: Note, bytes: Uint8Array, interactive: boolean): Promise<string> {
+  if (noteCryptoMode(note) !== 'password') return decryptContent(effectiveCryptoConfig(state.config, 'key'), bytes)
+  const config = state.config
+  return unlockWithPassphrase(
+    note.path,
+    config,
+    passphrase => decryptContent(effectiveCryptoConfig(config, 'password', passphrase), bytes),
+    interactive ? { prompt: () => promptForPassphrase(note) } : {},
+  )
+}
+
+// ============= PASSPHRASE MODAL =============
+let finishPassphrasePrompt: ((value: string | null) => void) | null = null
+
+function showPassphraseError(message: string) {
+  showFieldError('passphraseError', message)
+}
+
+/**
+ * Ask for a note's passphrase in a masked modal — a plain-text window.prompt
+ * would show it as it is typed. Resolves null on cancel (overlay click or the
+ * Cancel button); the Unlock button refuses an empty entry so an accidental
+ * Enter cannot dismiss the dialog with nothing typed.
+ */
+function promptForPassphrase(note: Note): Promise<string | null> {
+  // A second prompt while one is open would orphan the first waiter.
+  if (finishPassphrasePrompt) closePassphraseModal(null)
+  return new Promise(resolve => {
+    finishPassphrasePrompt = resolve
+    byEl<HTMLElement>('passphraseTitle').textContent = `🔒 Passphrase for "${note.name}"`
+    byEl<HTMLInputElement>('passphraseInput').value = ''
+    showPassphraseError('')
+    byEl<HTMLElement>('passphraseModal').classList.add('open')
+    byEl<HTMLInputElement>('passphraseInput').focus()
+  })
+}
+
+function closePassphraseModal(value: string | null) {
+  const finish = finishPassphrasePrompt
+  finishPassphrasePrompt = null
+  byEl<HTMLElement>('passphraseModal').classList.remove('open')
+  // Never leave a typed passphrase sitting in a hidden field.
+  byEl<HTMLInputElement>('passphraseInput').value = ''
+  finish?.(value)
+}
+
+function submitPassphrase() {
+  const value = byEl<HTMLInputElement>('passphraseInput').value
+  if (!value) {
+    showPassphraseError('Passphrase cannot be empty')
+    return
+  }
+  closePassphraseModal(value)
+}
+
 // ============= CONNECT & LIST =============
 const CONNECT_TIMEOUT_MS = 15000
 
@@ -341,7 +449,7 @@ async function connect(background = false) {
 
 async function doConnect(c: Config, signal: AbortSignal) {
   const path = c.ghPath || ''
-  const ext = c.fileExt || '.md.gpg'
+  const ext = c.fileExt || DEFAULT_NOTE_EXT
   const startPath = state.currentBrowsePath
   console.log('Connecting to', `${c.ghOwner}/${c.ghRepo}`, 'path:', path, 'branch:', c.ghBranch)
 
@@ -479,7 +587,7 @@ async function refreshOpenNoteContent(opts: { announce?: boolean } = {}) {
     }
 
     const binary = Uint8Array.from(atob(data.content), c => c.charCodeAt(0))
-    const decrypted = await decryptContent(state.config, binary)
+    const decrypted = await decryptForNote(openFile, binary, false)
     if (state.currentFile?.path !== openFile.path) return
     // 'decrypt' means the base is unknown, so the plaintext may still turn out to
     // match the working copy — someone else already carries the same edit.
@@ -542,8 +650,8 @@ function adoptRemoteContent(openFile: Note, content: string, decrypted: string, 
   // The note is clean against its new base, so the editor chrome must agree: the
   // 'up-to-date' path reaches here from a dirty editor whose edit the remote
   // already had, and a still-enabled Save would push the same text again.
-  byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
-  byEl<HTMLElement>('discardBtn').style.visibility = 'hidden'
+  renderEditorHeader(false)
+  byEl<HTMLButtonElement>('discardBtn').style.visibility = 'hidden'
   byEl<HTMLButtonElement>('saveBtn').disabled = true
   return cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
 }
@@ -624,7 +732,7 @@ async function applyPendingRemoteRefresh() {
   clearRemoteRefresh()
   try {
     const binary = Uint8Array.from(atob(remote.content), c => c.charCodeAt(0))
-    const decrypted = await decryptContent(state.config, binary)
+    const decrypted = await decryptForNote(openFile, binary, true)
     if (state.currentFile?.path !== openFile.path) return
     removeDraft(openFile.path)
     contentCache.set(openFile.path, remote.content)
@@ -635,7 +743,7 @@ async function applyPendingRemoteRefresh() {
     // The base moved to the remote: persist it, or the background walk restores
     // the old one and the next load starts the divergence dance again.
     await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
-    byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
+    renderEditorHeader(false)
     byEl<HTMLButtonElement>('discardBtn').style.visibility = 'hidden'
     byEl<HTMLElement>('editorStatus').textContent = ''
     byEl<HTMLButtonElement>('saveBtn').disabled = true
@@ -660,7 +768,7 @@ async function pullChanges() {
   }
 
   const currentPath = state.currentBrowsePath
-  const ext = c.fileExt || '.md.gpg'
+  const ext = c.fileExt || DEFAULT_NOTE_EXT
   const token = state.currentBrowsePath + '|' + (state.currentFile?.path || '')
 
   setConnectionStatus('Syncing...', state.connected)
@@ -791,7 +899,7 @@ function renderNoteList() {
 
   // Then files
   state.notes.forEach(n => {
-    items.push(formatNoteItem(n, state.currentFile?.path))
+    items.push(formatNoteItem(n, state.currentFile?.path, state.config.fileExt))
   })
 
   list.innerHTML = items.join('')
@@ -882,7 +990,7 @@ async function navigateToDir(dirPath: string, opts: { prefetch?: boolean } = {})
       return
     }
 
-    const ext = c.fileExt || '.md.gpg'
+    const ext = c.fileExt || DEFAULT_NOTE_EXT
     const { dirs, notes: listed } = parseEntries(entries, ext)
     // The merge base (and the pre-edit blob of a drafted note) live in the TARGET
     // directory's own cache record, not in the notes we are navigating away from —
@@ -931,7 +1039,7 @@ async function selectNote(path: string) {
 
   byEl<HTMLElement>('placeholder').style.display = 'none'
   byEl<HTMLElement>('editor').style.display = 'flex'
-  byEl<HTMLElement>('editorFilename').textContent = note.name
+  renderEditorHeader(false)
 
   const draft = draftCache.get(note.path)
   if (draft !== undefined) {
@@ -947,7 +1055,7 @@ async function selectNote(path: string) {
       // revert to real content instead of an empty note.
       try {
         const binary = Uint8Array.from(atob(note.content), c => c.charCodeAt(0))
-        const decryptedBase = await decryptContent(state.config, binary)
+        const decryptedBase = await decryptForNote(note, binary, true)
         if (state.currentFile?.path !== note.path) return
         base = { text: decryptedBase, sha: note.sha }
         note = adoptBase(note, decryptedBase, note.sha)
@@ -985,7 +1093,7 @@ async function selectNote(path: string) {
         originalContent: baseline,
         isDirty: true,
       }
-      byEl<HTMLElement>('editorDirty').style.visibility = 'visible'
+      renderEditorHeader(true)
       byEl<HTMLButtonElement>('discardBtn').style.visibility = 'visible'
       byEl<HTMLElement>('editorStatus').textContent = ''
       byEl<HTMLButtonElement>('saveBtn').disabled = false
@@ -996,7 +1104,7 @@ async function selectNote(path: string) {
     }
   }
 
-  byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
+  renderEditorHeader(false)
   byEl<HTMLElement>('editorStatus').textContent = 'Decrypting...'
   state = { ...state, originalContent: '' }
   setContent('')
@@ -1023,7 +1131,7 @@ async function selectNote(path: string) {
     }
 
     const binary = Uint8Array.from(atob(note.content!), c => c.charCodeAt(0))
-    const decrypted = await decryptContent(state.config, binary)
+    const decrypted = await decryptForNote(note, binary, true)
     if (state.currentFile?.path !== note.path) return
     const clean = markNoteClean(note, state.notes, decrypted)
     state = {
@@ -1134,6 +1242,17 @@ document.addEventListener('DOMContentLoaded', () => {
   })
 })
 
+/**
+ * The header is a view of state, never written ad hoc: setContent() dispatches a
+ * change whose listener runs synchronously, so anything that renders the header
+ * before `currentFile` exists gets overwritten with an empty name — which is
+ * exactly what happened to a freshly created note.
+ */
+function renderEditorHeader(dirty = state.isDirty) {
+  byEl<HTMLElement>('editorFilename').textContent = state.currentFile?.name ?? ''
+  byEl<HTMLElement>('editorDirty').style.visibility = dirty ? 'visible' : 'hidden'
+}
+
 function onEditorInput() {
   const newContent = getContent()
   const result = computeDirtyState(state.notes, state.currentFile, newContent, state.originalContent)
@@ -1148,21 +1267,10 @@ function onEditorInput() {
     if (result.isDirty) saveDraft(state.currentFile.path, newContent)
     else removeDraft(state.currentFile.path)
   }
-  const filenameEl = byEl<HTMLElement>('editorFilename')
-  const dirtyEl = byEl<HTMLElement>('editorDirty')
-  const baseName = state.currentFile ? state.currentFile.name : ''
   byEl<HTMLButtonElement>('saveBtn').disabled = !result.isDirty
-  if (result.isDirty) {
-    byEl<HTMLElement>('editorStatus').textContent = ''
-    byEl<HTMLButtonElement>('discardBtn').style.visibility = 'visible'
-    filenameEl.textContent = baseName
-    dirtyEl.style.visibility = 'visible'
-  } else {
-    byEl<HTMLElement>('editorStatus').textContent = ''
-    byEl<HTMLButtonElement>('discardBtn').style.visibility = 'hidden'
-    filenameEl.textContent = baseName
-    dirtyEl.style.visibility = 'hidden'
-  }
+  byEl<HTMLElement>('editorStatus').textContent = ''
+  byEl<HTMLButtonElement>('discardBtn').style.visibility = result.isDirty ? 'visible' : 'hidden'
+  renderEditorHeader(result.isDirty)
   renderNoteList()
   if (state.showPreview) updatePreview(false)
 }
@@ -1402,6 +1510,7 @@ function discardChanges() {
     // New unsaved note — remove from sidebar and close
     if (!confirm('Discard this new note?')) return
     removeDraft(note.path)
+    clearNotePassphrase(note.path)
     state = { ...state, notes: state.notes.filter(n => n.path !== note.path) }
     closeEditor()
     renderNoteList()
@@ -1434,7 +1543,7 @@ async function saveNote() {
     '<span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;vertical-align:middle"><span class="spinner"></span></span> <span class="label">Save</span>'
 
   try {
-    const encrypted = await encryptContent(state.config, text)
+    const encrypted = await encryptContent(await cryptoConfigFor(state.currentFile, true), text)
     const note = state.currentFile
     const b64 = typeof encrypted === 'string' ? btoa(encrypted) : arrayToBase64(encrypted)
 
@@ -1447,8 +1556,12 @@ async function saveNote() {
 
     toast('Note saved successfully', 'success')
     clearRemoteRefresh()
-    byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
+    renderEditorHeader(false)
     byEl<HTMLButtonElement>('discardBtn').style.visibility = 'hidden'
+    // A freshly created note had no blob to delete, so newNote() disables this —
+    // and only selectNote() ever turns it back on. The note exists now, with the
+    // sha the PUT returned, so the button has to follow the state.
+    byEl<HTMLButtonElement>('deleteBtn').disabled = false
     btn.disabled = true
     renderNoteList()
   } catch (e) {
@@ -1473,39 +1586,127 @@ async function newNote() {
   if (state.currentFile && state.isDirty) {
     saveDraft(state.currentFile.path, state.currentContent)
   }
+  openNewNoteModal()
+}
 
-  const name = prompt('Note name (e.g., my-note):')
-  if (!name || !name.trim()) return
+// ============= NEW NOTE MODAL =============
+let newNoteBusy = false
 
-  const ext = state.config.fileExt || '.md.gpg'
-  const dir = state.currentBrowsePath || state.config.ghPath || ''
-  const path = dir ? `${dir}/${name.trim()}${ext}` : `${name.trim()}${ext}`
+function openNewNoteModal() {
+  byEl<HTMLInputElement>('newNoteName').value = ''
+  byEl<HTMLInputElement>('newNotePassphrase').value = ''
+  byEl<HTMLInputElement>('newNotePassphraseConfirm').value = ''
+  byEl<HTMLSelectElement>('newNoteMode').value = state.config.cryptoMode === 'password' ? 'password' : 'key'
+  showNewNoteError('')
+  onNewNoteModeChange()
+  byEl<HTMLElement>('newNoteModal').classList.add('open')
+  byEl<HTMLInputElement>('newNoteName').focus()
+}
 
-  // Check if exists
-  const existing = await ghGetFile(state.config, path)
-  if (existing) {
-    toast('A note with this name already exists', 'error')
+function closeNewNoteModal() {
+  byEl<HTMLElement>('newNoteModal').classList.remove('open')
+  // A cancelled creation must not leave a typed passphrase sitting in the DOM.
+  byEl<HTMLInputElement>('newNotePassphrase').value = ''
+  byEl<HTMLInputElement>('newNotePassphraseConfirm').value = ''
+}
+
+function showFieldError(id: string, message: string) {
+  const el = byEl<HTMLElement>(id)
+  el.textContent = message
+  el.style.display = message ? 'block' : 'none'
+}
+
+function showNewNoteError(message: string) {
+  showFieldError('newNoteError', message)
+}
+
+function onNewNoteModeChange() {
+  const mode = byEl<HTMLSelectElement>('newNoteMode').value
+  byEl<HTMLElement>('newNotePassGroup').style.display = mode === 'password' ? 'block' : 'none'
+  showNewNoteError('')
+}
+
+async function createNewNote() {
+  if (newNoteBusy) return
+  const typed = byEl<HTMLInputElement>('newNoteName').value.trim()
+  if (!typed) {
+    showNewNoteError('Note name is required')
     return
   }
+  const mode = byEl<HTMLSelectElement>('newNoteMode').value as 'key' | 'password'
+  let passphrase = ''
+  if (mode === 'password') {
+    passphrase = byEl<HTMLInputElement>('newNotePassphrase').value
+    const pairError = validatePassphrasePair(passphrase, byEl<HTMLInputElement>('newNotePassphraseConfirm').value)
+    if (pairError) {
+      showNewNoteError(pairError)
+      return
+    }
+  }
+
+  const ext = state.config.fileExt || DEFAULT_NOTE_EXT
+  const dir = state.currentBrowsePath || state.config.ghPath || ''
+  // The file is the name as typed, with the configured suffix appended once: type
+  // `test.md` and you get `test.md.asc`, type `test.asc` and you get `test.asc`.
+  const fileName = noteFileName(typed, ext)
+  // The heading is the note's *name*, so it drops every suffix — `test.md` and
+  // `test.asc` both seed `# test`.
+  const stem = noteNameFromInput(typed, state.config.fileExt)
+  const path = dir ? `${dir}/${fileName}` : fileName
+
+  newNoteBusy = true
+  const createBtn = byEl<HTMLButtonElement>('newNoteCreateBtn')
+  createBtn.disabled = true
+  // Check if exists — under *every* suffix a note may have, not just the one we
+  // are about to write. Otherwise creating `my-note` in a repo that already has
+  // `my-note.md.gpg` would silently add a second, shadowed note under a name that
+  // looks the same in the sidebar.
+  let clash: string | null = null
+  try {
+    clash =
+      (
+        await Promise.all(
+          noteExtensions(state.config.fileExt).map(async ext => {
+            const p = dir ? `${dir}/${stem}${ext}` : `${stem}${ext}`
+            return (await ghGetFile(state.config, p)) ? p : null
+          }),
+        )
+      ).find((p): p is string => !!p) ?? null
+  } catch (e) {
+    showNewNoteError(`Could not check for an existing note: ${errMsg(e)}`)
+    return
+  } finally {
+    newNoteBusy = false
+    createBtn.disabled = false
+  }
+  // Reported inside the modal rather than as a toast: the message belongs next
+  // to the name the user has to change, and the modal stays open to change it.
+  if (clash) {
+    showNewNoteError(`A note with this name already exists (${clash})`)
+    return
+  }
+
+  // Session-only: the passphrase is never written to settings or storage, and
+  // the note records that it wants it, so later opens and saves know to ask.
+  if (mode === 'password') setNotePassphrase(path, passphrase)
+  closeNewNoteModal()
 
   state = { ...state, currentFile: null, isDirty: false }
 
   byEl<HTMLElement>('placeholder').style.display = 'none'
   byEl<HTMLElement>('editor').style.display = 'flex'
-  byEl<HTMLElement>('editorFilename').textContent = `${name.trim()}${ext}`
-  byEl<HTMLElement>('editorDirty').style.visibility = 'hidden'
   clearRemoteRefresh()
   byEl<HTMLElement>('editorStatus').textContent = '🆕 New note'
-  setContent(`# ${name.trim()}\n\n`)
+  setContent(`# ${stem}\n\n`)
   byEl<HTMLButtonElement>('saveBtn').disabled = false
   byEl<HTMLButtonElement>('deleteBtn').disabled = true
   const currentContent = getContent()
   state = { ...state, currentContent, originalContent: '', isDirty: true }
 
   // Create a temporary note object and add to sidebar immediately
-  const newNoteObj = {
-    name: `${name.trim()}${ext}`,
-    path: path,
+  const newNoteObj: Note = {
+    name: fileName,
+    path,
     sha: null,
     size: 0,
     date: '',
@@ -1513,6 +1714,7 @@ async function newNote() {
     content: null,
     decrypted: currentContent,
     originalText: '',
+    cryptoMode: mode,
   }
   state = {
     ...state,
@@ -1520,6 +1722,8 @@ async function newNote() {
     notes: [...state.notes, newNoteObj].sort((a, b) => a.name.localeCompare(b.name)),
   }
 
+  // Last: the header can only be rendered once `currentFile` names the note.
+  renderEditorHeader(true)
   renderNoteList()
   updatePreview()
 }
@@ -1533,6 +1737,7 @@ async function deleteNote() {
     const deletedPath = state.currentFile.path
     removeDraft(deletedPath)
     removeCachedContent(deletedPath)
+    clearNotePassphrase(deletedPath)
     clearRemoteRefresh()
     state = { ...state, notes: state.notes.filter(n => n.path !== deletedPath) }
     closeEditor()
@@ -1618,11 +1823,7 @@ function sidebarSearch(query: string) {
   const extra: Array<{ path: string; name: string }> = []
   contentCache.forEach((_val, path) => {
     if (visiblePaths.has(path)) return
-    const name = path
-      .split('/')
-      .pop()!
-      .replace(/\.md\.gpg$/, '')
-      .replace(/\.gpg$/, '')
+    const name = noteDisplayName(path.split('/').pop()!, state.config.fileExt)
     if (name.toLowerCase().includes(q)) {
       extra.push({ path, name })
     }
@@ -1806,6 +2007,27 @@ function bindEvents() {
   byId('cryptoMode')?.addEventListener('change', onCryptoModeChange)
   byId('settingsCancelBtn')?.addEventListener('click', closeSettings)
   byId('settingsSaveBtn')?.addEventListener('click', saveSettings)
+
+  // New note modal
+  byId('newNoteCreateBtn')?.addEventListener('click', createNewNote)
+  byId('newNoteCancelBtn')?.addEventListener('click', closeNewNoteModal)
+  byId('newNoteMode')?.addEventListener('change', onNewNoteModeChange)
+  for (const id of ['newNoteName', 'newNotePassphrase', 'newNotePassphraseConfirm']) {
+    byId(id)?.addEventListener('input', () => showNewNoteError(''))
+  }
+  for (const id of ['newNoteName', 'newNotePassphraseConfirm']) {
+    byId(id)?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') createNewNote()
+    })
+  }
+
+  // Passphrase modal
+  byId('passphraseUnlockBtn')?.addEventListener('click', submitPassphrase)
+  byId('passphraseCancelBtn')?.addEventListener('click', () => closePassphraseModal(null))
+  byId('passphraseInput')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitPassphrase()
+  })
+  byId('passphraseInput')?.addEventListener('input', () => showPassphraseError(''))
 }
 
 bindEvents()
@@ -1831,4 +2053,10 @@ byEl<HTMLElement>('breadcrumb')?.addEventListener('click', e => {
 // Close modal on overlay click
 byEl<HTMLElement>('settingsModal')?.addEventListener('click', function (e) {
   if (e.target === this) closeSettings()
+})
+byEl<HTMLElement>('newNoteModal')?.addEventListener('click', function (e) {
+  if (e.target === this) closeNewNoteModal()
+})
+byEl<HTMLElement>('passphraseModal')?.addEventListener('click', function (e) {
+  if (e.target === this) closePassphraseModal(null)
 })

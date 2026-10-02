@@ -24,15 +24,37 @@ export async function encryptContent(config: Config, plaintext: string): Promise
   return typeof result === 'string' ? result : result.data
 }
 
+/**
+ * The armored tails (`.asc` / `.gpg`) are what a note is written with, but they
+ * are also what `gpg --export -a KEYID` produces. A listing cannot tell the two
+ * apart — it carries no content — so the check happens where the bytes are, on
+ * the way into the editor.
+ */
+const KEY_BLOCK = /-----BEGIN PGP (?:PUBLIC|PRIVATE|SECRET) KEY BLOCK-----/
+
+export function isArmoredKey(armored: string): boolean {
+  return KEY_BLOCK.test(armored)
+}
+
 export async function decryptContent(config: Config, encryptedBytes: Uint8Array): Promise<string> {
   const asArmored = new TextDecoder().decode(encryptedBytes)
+  if (isArmoredKey(asArmored)) {
+    throw new Error('This file is an exported PGP key, not an encrypted note')
+  }
   const message = await openpgp.readMessage({ armoredMessage: asArmored })
 
   if (config.cryptoMode === 'password') {
     const pw = config.cryptoPassword
     if (!pw) throw new Error('Passphrase is not configured')
-    const result = await openpgp.decrypt({ message, passwords: [pw] })
-    return result.data
+    try {
+      const result = await openpgp.decrypt({ message, passwords: [pw] })
+      return result.data
+    } catch {
+      // The message parsed (readMessage succeeded above); the session key is
+      // what failed to open. OpenPGP's own wording ("Session key decryption
+      // failed") means nothing to a note-taker.
+      throw new Error('Wrong passphrase for this note')
+    }
   } else {
     const armoredPrivKey = config.privateKey
     const passphrase = config.keyPassphrase
