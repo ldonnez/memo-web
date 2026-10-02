@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { describe, it, before } from 'node:test'
 import * as openpgp from 'openpgp'
-import { encryptContent, decryptContent } from '../lib/crypto.ts'
+import { encryptContent, decryptContent, isArmoredKey } from '../lib/crypto.ts'
 import type { Config } from '../lib/types.ts'
 
 let keyConfig: Config
@@ -80,6 +80,36 @@ describe('decryptContent', () => {
     await assert.rejects(
       () => decryptContent({ cryptoMode: 'key', privateKey: '', keyPassphrase: '' }, armoredBytes),
       /Private key is not configured/,
+    )
+  })
+})
+
+describe('isArmoredKey', () => {
+  // Notes are written with the same armored tails gpg exports keys with, and a
+  // listing cannot tell them apart — the bytes are the only place left to check.
+  it('recognises every armored key block', () => {
+    for (const label of ['PUBLIC', 'PRIVATE', 'SECRET']) {
+      assert.equal(
+        isArmoredKey(`-----BEGIN PGP ${label} KEY BLOCK-----\n\nmQ\n-----END PGP ${label} KEY BLOCK-----`),
+        true,
+      )
+    }
+  })
+
+  it('does not mistake an encrypted note for a key', async () => {
+    const armored = await encryptContent(keyConfig, 'hello')
+    assert.equal(isArmoredKey(armored), false)
+  })
+
+  it('makes decryptContent say what the file is, not "no valid OpenPGP data"', async () => {
+    const exported = new TextEncoder().encode(
+      '-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nmQINBF\n-----END PGP PUBLIC KEY BLOCK-----\n',
+    )
+    await assert.rejects(() => decryptContent(keyConfig, exported), /exported PGP key, not an encrypted note/)
+    await assert.rejects(
+      () => decryptContent({ cryptoMode: 'password', cryptoPassword: 'hunter2' }, exported),
+      /exported PGP key, not an encrypted note/,
+      'password mode too — a key is not decryptable either way',
     )
   })
 })
