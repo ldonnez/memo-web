@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.0](https://github.com/ldonnez/memo-web/compare/v0.7.4...v0.8.0) (2026-10-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* default save to .asc extension
+
+### Code Refactoring
+
+* default save to .asc extension ([83c62b8](https://github.com/ldonnez/memo-web/commit/83c62b8470c11db27b67f73b446a43c5e2417a98))
+
 ## [0.7.4](https://github.com/ldonnez/memo-web/compare/v0.7.3...v0.7.4) (2026-09-29)
 
 
