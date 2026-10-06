@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.9.0](https://github.com/ldonnez/memo-web/compare/v0.8.0...v0.9.0) (2026-10-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* default save to .asc extension
+* typescript 7 with oxlint
+* update to CodeMirror 6 and use Vite
+
+### Features
+
+* add timeouts to github requests ([071d721](https://github.com/ldonnez/memo-web/commit/071d72150a542a4a8563ffb45a39385bb8b7e2ed))
+* **ci:** add release please ([1185b98](https://github.com/ldonnez/memo-web/commit/1185b98cc148b1aa2c61cad24c9858acb0ef005e))
+* heading button now adds single header ([8b88fe2](https://github.com/ldonnez/memo-web/commit/8b88fe21ca4d2c3d20b6a3f8a1ba2d59caee58e5))
+* keep last opened note when closing app ([c9a2fc5](https://github.com/ldonnez/memo-web/commit/c9a2fc53d261e896a8ec87269245b51acce4b5fb))
+* load offline/cached notes first on startup ([b0327b7](https://github.com/ldonnez/memo-web/commit/b0327b7c73ca47bd5bb24e86f181d0665a8b72d8))
+* show the warning button when newer remote version exists ([53ce7c4](https://github.com/ldonnez/memo-web/commit/53ce7c40c01153ba079228d484991292ddc50f57))
+
+
+### Bug Fixes
+
+* auto-update clean notes instead of warning on every remote change ([9bd1f67](https://github.com/ldonnez/memo-web/commit/9bd1f67cf40c6867606bc7e9a1e7e6ccc0a85b44))
+* correctly set note count notes and offline navigating ([eb7156d](https://github.com/ldonnez/memo-web/commit/eb7156d5f5e4d1217896c0dc5e3dfc21d64a9f51))
+* don't show whitespace when keyboard pulls up ([19010da](https://github.com/ldonnez/memo-web/commit/19010da5003564040ec75b6bd32f6463ee0aabb1))
+* ensure cache never holds a stale SHA ([0facceb](https://github.com/ldonnez/memo-web/commit/0facceb72a7d7b64dbe46858dc644ac06a625fd7))
+* ensure correct basePath ([a0e66f4](https://github.com/ldonnez/memo-web/commit/a0e66f4e6cbfe270563faed9cf78939c55a6ef5c))
+* ensure offline subdir navigation ([75504d8](https://github.com/ldonnez/memo-web/commit/75504d8f67a862b01c12d23c3d1c26381bd04577))
+* note navigation in subdirectory ([c8f3e67](https://github.com/ldonnez/memo-web/commit/c8f3e67c78fc0d5b4cfbaa884338e6eb5ecbff3b))
+* remove keyboard viewport calculations ([7253aff](https://github.com/ldonnez/memo-web/commit/7253affd781944253eb9594aefac8d17adf5b43c))
+* **ui:** Remove unnecessary spacing above IOS keyboard ([52f46ed](https://github.com/ldonnez/memo-web/commit/52f46edc59f73b89c4407675cc24198cea6161d2))
+
+
+### Miscellaneous Chores
+
+* **deps:** bump the dev-dependencies group across 1 directory with 3 updates ([6ea5979](https://github.com/ldonnez/memo-web/commit/6ea59790695f402e5de25d7bb9c6ce772e0a422f))
+* **main:** release 0.7.2 ([c6615eb](https://github.com/ldonnez/memo-web/commit/c6615eb9b81f49e609d8ef3a68e8840d4b70e985))
+* **main:** release 0.9.0 ([4254d4a](https://github.com/ldonnez/memo-web/commit/4254d4a4abafd3c368cfb2b3f6c5c531f54d10cb))
+
+
+### Code Refactoring
+
+* default save to .asc extension ([07029a2](https://github.com/ldonnez/memo-web/commit/07029a2b6bb13c55f34b6933a2c018df54d842a9))
+* typescript 7 with oxlint ([811ae69](https://github.com/ldonnez/memo-web/commit/811ae69be3105d592c4d0c6df22f4523d844e675))
+* update to CodeMirror 6 and use Vite ([1a3f1f4](https://github.com/ldonnez/memo-web/commit/1a3f1f434f070e895f846bda4bcb9d160118552b))
+
 ## [0.8.0](https://github.com/ldonnez/memo-web/compare/v0.7.4...v0.8.0) (2026-10-03)
 
 
