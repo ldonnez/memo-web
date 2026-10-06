@@ -76,6 +76,15 @@ describe('decryptContent', () => {
     )
   })
 
+  it('says "Wrong passphrase for this note" instead of OpenPGP session-key jargon', async () => {
+    const armored = await encryptContent({ cryptoMode: 'password', cryptoPassword: 'hunter2' }, 'hello')
+    const bytes = new TextEncoder().encode(armored)
+    await assert.rejects(
+      () => decryptContent({ cryptoMode: 'password', cryptoPassword: 'not-the-passphrase' }, bytes),
+      /Wrong passphrase for this note/,
+    )
+  })
+
   it('throws when key mode but no private key configured', async () => {
     await assert.rejects(
       () => decryptContent({ cryptoMode: 'key', privateKey: '', keyPassphrase: '' }, armoredBytes),

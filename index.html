@@ -338,6 +338,40 @@
       </div>
     </div>
 
+    <!-- New Note Modal -->
+    <div class="modal-overlay" id="newNoteModal">
+      <div class="modal">
+        <h2>🆕 New note</h2>
+        <div class="form-group">
+          <label>Note name</label>
+          <input type="text" id="newNoteName" placeholder="my-note" autocomplete="off" autocapitalize="off" />
+        </div>
+        <div class="form-group">
+          <label>Encryption</label>
+          <select id="newNoteMode">
+            <option value="key">GPG Key (asymmetric)</option>
+            <option value="password">Passphrase (symmetric)</option>
+          </select>
+          <div class="hint">A passphrase note is encrypted with a passphrase chosen for this note alone.</div>
+        </div>
+        <div id="newNotePassGroup" style="display: none">
+          <div class="form-group">
+            <label>Passphrase</label>
+            <input type="password" id="newNotePassphrase" autocomplete="new-password" />
+          </div>
+          <div class="form-group">
+            <label>Confirm passphrase</label>
+            <input type="password" id="newNotePassphraseConfirm" autocomplete="new-password" />
+          </div>
+        </div>
+        <div class="field-error" id="newNoteError" style="display: none"></div>
+        <div class="form-actions">
+          <button class="btn" id="newNoteCancelBtn">Cancel</button>
+          <button class="btn btn-primary" id="newNoteCreateBtn">Create</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Toast container -->
     <div class="toast-container" id="toastContainer"></div>
 

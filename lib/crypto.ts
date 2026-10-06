@@ -46,8 +46,15 @@ export async function decryptContent(config: Config, encryptedBytes: Uint8Array)
   if (config.cryptoMode === 'password') {
     const pw = config.cryptoPassword
     if (!pw) throw new Error('Passphrase is not configured')
-    const result = await openpgp.decrypt({ message, passwords: [pw] })
-    return result.data
+    try {
+      const result = await openpgp.decrypt({ message, passwords: [pw] })
+      return result.data
+    } catch {
+      // The message parsed (readMessage succeeded above); the session key is
+      // what failed to open. OpenPGP's own wording ("Session key decryption
+      // failed") means nothing to a note-taker.
+      throw new Error('Wrong passphrase for this note')
+    }
   } else {
     const armoredPrivKey = config.privateKey
     const passphrase = config.keyPassphrase

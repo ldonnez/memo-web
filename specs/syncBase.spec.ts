@@ -145,6 +145,23 @@ describe('carryBases', () => {
     const carried = carryBases(fresh, [])
     assert.ok(carried.every(n => baseOf(n).sha === null))
   })
+
+  it("carries the note's own cryptoMode — a listing knows nothing about encryption", () => {
+    const prevWithMode = [makeNote({ path: 'a.md.gpg', baseText: B, baseSha: 'sha-a', cryptoMode: 'password' })]
+    const carried = carryBases([makeNote({ path: 'a.md.gpg', sha: 'sha-a2' })], prevWithMode)
+    assert.equal(carried[0]!.cryptoMode, 'password', 'dropping it would flip the note to the app-wide mode')
+  })
+
+  it('carries cryptoMode even when there is no base to carry', () => {
+    const prevWithMode = [makeNote({ path: 'a.md.gpg', cryptoMode: 'password' })]
+    const carried = carryBases([makeNote({ path: 'a.md.gpg' })], prevWithMode)
+    assert.equal(carried[0]!.cryptoMode, 'password', 'the early return for a missing base must not drop the mode')
+  })
+
+  it('never invents a cryptoMode for a note that has none', () => {
+    const carried = carryBases(fresh, prev)
+    assert.ok(carried.every(n => !('cryptoMode' in n)))
+  })
 })
 
 // ============= NAVIGATING INTO A DIRECTORY =============
@@ -166,6 +183,16 @@ describe('mergeDirListing', () => {
   it('carries the base from the target dir record', () => {
     const merged = mergeDirListing(listed, cached, () => false)
     assert.deepEqual(baseOf(merged[0]!), { text: B, sha: 'sha-old' })
+  })
+
+  it("carries the note's cryptoMode from the target dir record", () => {
+    const cachedPw = [
+      makeNote({ path: 'sub/a.md.gpg', sha: 'sha-old', baseText: B, baseSha: 'sha-old', cryptoMode: 'password' }),
+      makeNote({ path: 'sub/b.md.gpg', sha: 'sha-b', baseText: B, baseSha: 'sha-b' }),
+    ]
+    const merged = mergeDirListing(listed, cachedPw, () => false)
+    assert.equal(merged[0]!.cryptoMode, 'password')
+    assert.equal(merged[1]!.cryptoMode, undefined)
   })
 
   it('takes the fresh listing SHA while the base stays at the last synced one', () => {

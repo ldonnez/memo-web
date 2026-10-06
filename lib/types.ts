@@ -45,6 +45,13 @@ export interface Note {
    */
   baseText?: string | null
   baseSha?: string | null
+  /**
+   * The note's own encryption mode. Unset means "follow `config.cryptoMode`"
+   * (every note created before per-note crypto existed), so a note written with
+   * a passphrase keeps decrypting with that passphrase even when the app is
+   * configured for GPG keys, and vice versa.
+   */
+  cryptoMode?: 'key' | 'password'
 }
 
 export interface GhFileEntry {
