@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/ldonnez/memo-web/compare/v0.9.0...v0.9.1) (2026-10-09)
+
+
+### Miscellaneous Chores
+
+* **main:** release 0.9.1 ([0737760](https://github.com/ldonnez/memo-web/commit/07377605a2abd54ceb0b7b44f013dde70c209817))
+
 ## [0.9.0](https://github.com/ldonnez/memo-web/compare/v0.8.0...v0.9.0) (2026-10-06)
 
 
