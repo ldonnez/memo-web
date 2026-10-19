@@ -18,7 +18,7 @@
     "@commitlint/cli": "^21.2.3",
     "@commitlint/config-conventional": "^21.2.2",
     "@types/node": "^26.6.5",
-    "oxlint": "^1.87.0",
+    "oxlint": "^1.88.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
     "vite-plugin-pwa": "^2.0.0"
