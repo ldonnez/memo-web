@@ -35,12 +35,12 @@
     "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/language": "^6.13.1",
     "@codemirror/state": "^6.7.6",
-    "@codemirror/view": "^6.43.14",
+    "@codemirror/view": "^6.43.15",
     "@fig/lezer-bash": "^1.2.5",
     "@lezer/highlight": "^1.2.5",
     "dompurify": "^3.4.17",
     "highlight.js": "^11.12.0",
-    "marked": "^18.1.1",
+    "marked": "^18.1.2",
     "openpgp": "^6.3.2",
     "prettier": "^3.9.10"
   }
