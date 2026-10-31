@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.5](https://github.com/ldonnez/memo-web/compare/v0.9.4...v0.9.5) (2026-10-31)
+
+
+### Bug Fixes
+
+* clear offline cache when switching repos ([4eaa7d3](https://github.com/ldonnez/memo-web/commit/4eaa7d34dd6d8b87db2314a0c1f096365a09e80f))
+* ios 27 blur topbar fix ([2c4fd64](https://github.com/ldonnez/memo-web/commit/2c4fd645962eef0a19f4c1f294281e102be6073d))
+* offline cache issues ([7cd6ad8](https://github.com/ldonnez/memo-web/commit/7cd6ad8a6861629c845e4aa0c32609a2b76dc4a5))
+* preserve offline blobs and merge bases across sync ([f5c26c0](https://github.com/ldonnez/memo-web/commit/f5c26c0cf3517249ba8fdebceb9f7e1dea9b77a0))
+* type the walk cancellation callback in specs ([92e406e](https://github.com/ldonnez/memo-web/commit/92e406ee4df59a2657e04767c1c7dc6e04637d82))
+
 ## [0.9.4](https://github.com/ldonnez/memo-web/compare/v0.9.3...v0.9.4) (2026-10-30)
 
 
