@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.6](https://github.com/ldonnez/memo-web/compare/v0.9.5...v0.9.6) (2026-10-31)
+
+
+### Bug Fixes
+
+* make the ios status bar strip opaque ([9740d5b](https://github.com/ldonnez/memo-web/commit/9740d5bc67e32eb5f53fe7784223b008725b6dc4))
+
 ## [0.9.5](https://github.com/ldonnez/memo-web/compare/v0.9.4...v0.9.5) (2026-10-31)
 
 
