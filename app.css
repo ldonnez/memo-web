@@ -39,6 +39,9 @@ a:hover {
   text-decoration: underline;
 }
 
+.status-bar-strip {
+  display: none;
+}
 header {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -883,5 +886,21 @@ h1 .version {
   }
   #previewSearchInput {
     font-size: 16px;
+  }
+}
+
+@supports (-webkit-touch-callout: none) and (background-clip: text) {
+  @media (display-mode: standalone) {
+    .status-bar-strip {
+      display: block;
+      position: fixed;
+      inset: 0 0 auto;
+      height: 11px;
+      z-index: 101;
+      pointer-events: none;
+      background-color: var(--surface);
+      -webkit-background-clip: text;
+      background-clip: text;
+    }
   }
 }
