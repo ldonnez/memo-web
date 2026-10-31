@@ -34,7 +34,8 @@ let restoreDraftBaselines: (notes: Note[], prev?: Note[]) => Note[]
 let walkAllDirsAndPrefetch: (
   config: Config,
   rootPath: string,
-  fileExt: string,
+  fileExt?: string,
+  isCancelled?: () => boolean,
 ) => Promise<{
   totalNotes: number
   totalDirs: number
