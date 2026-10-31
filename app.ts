@@ -62,6 +62,7 @@ import {
   DEFAULT_NOTE_EXT,
   LEGACY_NOTE_EXTS,
   withTimeout,
+  repoIdentity,
   saveLastNotePath,
   getLastNotePath,
   clearLastNotePath,
@@ -74,6 +75,7 @@ import {
   decidePull,
   carryBases,
   mergeDirListing,
+  restoreStillCurrentBlobs,
   applyLocalStatus,
   isModified,
   adoptBase,
@@ -319,6 +321,7 @@ function switchTab(tabId: string) {
 }
 
 async function saveSettings() {
+  const previousRepo = repoIdentity(state.config)
   saveConfigToState()
   try {
     localStorage.setItem('memoweb_config', JSON.stringify(state.config))
@@ -326,7 +329,9 @@ async function saveSettings() {
     console.warn('localStorage write failed:', e)
   }
   closeSettings()
-  await connect()
+  // A different remote invalidates the cached listing (and its merge bases);
+  // re-saving the same one must keep them for the connect to carry forward.
+  await connect(false, repoIdentity(state.config) !== previousRepo)
 }
 
 // ============= PER-NOTE CRYPTO =============
@@ -419,7 +424,7 @@ function submitPassphrase() {
 // ============= CONNECT & LIST =============
 const CONNECT_TIMEOUT_MS = 15000
 
-async function connect(background = false) {
+async function connect(background = false, reset = false) {
   const c = state.config
   if (!c.ghToken || !c.ghOwner || !c.ghRepo) {
     setConnectionStatus('Configure settings first', false)
@@ -428,10 +433,10 @@ async function connect(background = false) {
 
   if (!background) {
     setConnectionStatus('Connecting...', false)
-    // Do not blank the sidebar when the open note lives outside the connect
-    // target: doConnect's guard keeps that note and its directory, so clearing
-    // here would leave the user staring at an empty list next to the editor.
-    if (!(state.currentFile && state.currentBrowsePath !== (c.ghPath || ''))) {
+    // Only a changed remote warrants blanking the sidebar. Clearing on every
+    // settings save would throw away the notes' merge bases before doConnect's
+    // carryBases() runs, so the record it writes would lose them for good.
+    if (reset) {
       state = { ...state, notes: [], dirs: [] }
       renderNoteList()
     }
@@ -523,13 +528,19 @@ async function doConnect(c: Config, signal: AbortSignal) {
   // Capture the pre-parse notes (the cached baseline) BEFORE fetchAllNotesContent,
   // so a drafted note's blob survives the connect's own content prefetch and
   // cache write.
-  const baselineByPath = new Map(state.notes.map(n => [n.path, n]))
+  const baselineNotes = state.notes
+  const baselineByPath = new Map(baselineNotes.map(n => [n.path, n]))
   state = { ...state, dirs, notes, currentBrowsePath: path, totalNotes: notes.length, totalDirs: dirs.length }
   pruneContentCache(notes, path)
   const fetched = await fetchAllNotesContent(state.config, state.notes)
+  // A prefetch that failed (offline blip, rate limit) leaves the note content-less.
+  // The record this connect is about to write would then drop the directory's
+  // offline copy — and the background walk reads that already-overwritten record,
+  // so it cannot repair it. Hand back the blobs that are still the remote's.
+  const restored = restoreStillCurrentBlobs(fetched, baselineNotes)
   state = {
     ...state,
-    notes: fetched.map(n => (draftCache.has(n.path) ? (baselineByPath.get(n.path) ?? n) : n)),
+    notes: restored.map(n => (draftCache.has(n.path) ? (baselineByPath.get(n.path) ?? n) : n)),
   }
   if (signal.aborted) return
   if (state.currentBrowsePath !== path) return
@@ -794,7 +805,17 @@ async function pullChanges() {
     const entries = await ghListDir(state.config, currentPath || '')
     if (Array.isArray(entries)) {
       const { dirs, notes: listed } = parseEntries(entries, ext)
-      const merged = applyLocalStatus(carryBases(listed, state.notes), p => draftCache.get(p))
+      // A drafted note is skipped by fetchAllNotesContent, so its pre-edit blob
+      // must survive this listing merge. carryBases alone only re-attaches the
+      // base, leaving the note content-less in the record the sync writes next —
+      // after a reload there is then nothing to decrypt for discard/divergence.
+      const cached = await loadCachedNotes(currentPath || '')
+      const merged = applyLocalStatus(
+        mergeDirListing(listed, [...(cached?.notes ?? []), ...state.notes], p => draftCache.has(p), {
+          prefetch: true,
+        }),
+        p => draftCache.get(p),
+      )
       pruneContentCache(merged, currentPath)
       state = { ...state, dirs, notes: merged }
       renderNoteList()
@@ -1749,6 +1770,9 @@ async function deleteNote() {
     clearNotePassphrase(deletedPath)
     clearRemoteRefresh()
     state = { ...state, notes: state.notes.filter(n => n.path !== deletedPath) }
+    // Persist the deletion before the editor is closed: otherwise the record still
+    // holds the note and a reload offline resurrects it in the sidebar.
+    await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
     closeEditor()
     toast('Note deleted', 'info')
     renderNoteList()

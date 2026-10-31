@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import { strict as assert } from 'node:assert'
 import { draftCache } from '../lib/draft.ts'
 import { planPull, baseOf, carryBases, localWorkingText, isModified } from '../lib/sync.ts'
+import { repoIdentity } from '../lib/util.ts'
 import type { Note, Dir } from '../lib/types.ts'
 
 // =====================================================================
@@ -929,5 +930,58 @@ describe('openNoteByPath prefetch opt-out keeps the merge base', () => {
       'up-to-date',
       'bug: remote === advanced base → warning never offered',
     )
+  })
+})
+
+// =====================================================================
+// saveSettings() must not blank the listing when the remote is unchanged.
+// Blanking it made doConnect's carryBases() match nothing, so the record it
+// wrote lost every note's merge base — offline divergence detection then had
+// no baseline to compare against.
+// =====================================================================
+
+describe('saveSettings — only a changed remote resets the listing', () => {
+  const OLD_REPO = { ghOwner: 'acme', ghRepo: 'notes', ghBranch: 'main' }
+
+  function loadedWithBase(): SnapState {
+    const base = {
+      ...ROOT,
+      notes: [
+        {
+          ...makeNote('root.md.gpg', 'root.md.gpg'),
+          content: 'b2xk',
+          sha: 'sha-old',
+          baseText: 'old',
+          baseSha: 'sha-old',
+        },
+      ],
+    }
+    return loadFromCache(
+      { notes: [], dirs: [], currentBrowsePath: '', currentFile: null },
+      { '(root)': base },
+      '(root)',
+    )
+  }
+
+  // Mirrors app.ts connect(false, reset): only a changed remote blanks the list.
+  function connectWithReset(state: SnapState, reset: boolean): SnapState {
+    return reset ? { ...state, notes: [], dirs: [] } : state
+  }
+
+  function mergedBase(state: SnapState) {
+    const fresh = [{ ...makeNote('root.md.gpg', 'root.md.gpg'), content: 'bmV3', sha: 'sha-new' }]
+    return baseOf(carryBases(fresh, state.notes)[0]!)
+  }
+
+  it('keeps the merge bases when the remote is unchanged', () => {
+    const reset = repoIdentity(OLD_REPO) !== repoIdentity(OLD_REPO)
+    assert.equal(reset, false)
+    assert.deepEqual(mergedBase(connectWithReset(loadedWithBase(), reset)), { text: 'old', sha: 'sha-old' })
+  })
+
+  it('drops the old bases when the remote changes', () => {
+    const reset = repoIdentity(OLD_REPO) !== repoIdentity({ ...OLD_REPO, ghRepo: 'other' })
+    assert.equal(reset, true)
+    assert.deepEqual(mergedBase(connectWithReset(loadedWithBase(), reset)), { text: null, sha: null })
   })
 })

@@ -1,5 +1,5 @@
 import type { HLJSApi } from 'highlight.js'
-import type { CachedRecord, Dir, Note } from './types.ts'
+import type { CachedRecord, Config, Dir, Note } from './types.ts'
 import { adoptBase, withBase } from './sync.ts'
 
 export function withTimeout<T>(
@@ -306,6 +306,16 @@ export function parsePendingRefresh(raw: string | null): PendingRefresh | null {
   } catch {
     return null
   }
+}
+
+/**
+ * Identifies the remote a set of cached notes came from. A settings save that
+ * leaves this unchanged must not throw the listing away: the notes carry the
+ * merge bases, and blanking them makes the connect's own carryBases() match
+ * nothing, so the record it writes loses every base for the directory.
+ */
+export function repoIdentity(config: Pick<Config, 'ghOwner' | 'ghRepo' | 'ghBranch'>): string {
+  return `${config.ghOwner || ''}/${config.ghRepo || ''}@${config.ghBranch || 'main'}`
 }
 
 function cacheKeyForPath(path: string | undefined): string {

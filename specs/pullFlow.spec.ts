@@ -7,6 +7,7 @@ import {
   decidePull,
   carryBases,
   mergeDirListing,
+  restoreStillCurrentBlobs,
   applyLocalStatus,
   isModified,
 } from '../lib/sync.ts'
@@ -1219,5 +1220,118 @@ describe('opening a note in a subdirectory', () => {
     const outcome = refreshOpenNote(state, origin)
     assert.equal(outcome.flagged, true, 'the divergence is reported, not silently overwritten')
     assert.equal(state.currentContent, 'my edit to b', 'the local edit is intact')
+  })
+})
+
+// =====================================================================
+// 14. Sync (pullChanges) rebuilds the listing, then the prefetch skips drafted
+// notes. Merging with carryBases alone therefore persists a content-less note —
+// after a reload there is no blob left to decrypt for discard or divergence.
+// =====================================================================
+
+describe("syncing a directory keeps a drafted note's pre-edit blob", () => {
+  const SYNC = 'sub/sync.md.gpg'
+  const OLD = 'the text I started editing'
+  const DRAFT = 'my local edit'
+  const MOVED = 'changed on another device'
+
+  function seededDraftState(): AppState {
+    return loadFromCache([
+      makeNote({
+        name: SYNC,
+        path: SYNC,
+        sha: 'sha-old',
+        content: b64(OLD),
+        baseText: OLD,
+        baseSha: 'sha-old',
+      }),
+    ])
+  }
+
+  /** Mirrors pullChanges: listing -> merge -> prefetch -> the record it writes. */
+  function pullMerge(state: AppState, origin: FakeOrigin, record: Note[] | null): AppState {
+    const listed = [makeNote({ name: SYNC, path: SYNC, sha: origin.get(SYNC)!.sha, content: null })]
+    const merged = applyLocalStatus(
+      mergeDirListing(listed, [...(record ?? []), ...state.notes], p => draftCache.has(p), { prefetch: true }),
+      p => draftCache.get(p),
+    )
+    return prefetch({ ...state, notes: merged }, origin)
+  }
+
+  it('keeps the blob and the stale SHA for a drafted note skipped by the prefetch', () => {
+    const origin = new FakeOrigin()
+    origin.seed(SYNC, OLD, 'sha-old')
+    origin.push(SYNC, MOVED)
+    draftCache.set(SYNC, DRAFT)
+    try {
+      const state = seededDraftState()
+      const after = pullMerge(state, origin, state.notes)
+      const note = after.notes[0]!
+      assert.equal(note.content, b64(OLD), 'the pre-edit blob survives the sync cache write')
+      assert.equal(note.sha, 'sha-old', 'the stale SHA turns a blind save into a 409, not an overwrite')
+
+      const opened = openNote(after, SYNC)
+      assert.equal(opened.currentContent, DRAFT, 'the draft is still what the editor shows')
+      assert.equal(opened.originalContent, OLD, 'discard reverts to real content, not an empty note')
+    } finally {
+      draftCache.delete(SYNC)
+    }
+  })
+
+  it('regression: carryBases alone persists a content-less drafted note', () => {
+    const origin = new FakeOrigin()
+    origin.seed(SYNC, OLD, 'sha-old')
+    origin.push(SYNC, MOVED)
+    draftCache.set(SYNC, DRAFT)
+    try {
+      const state = seededDraftState()
+      const listed = [makeNote({ name: SYNC, path: SYNC, sha: origin.get(SYNC)!.sha, content: null })]
+      const merged = applyLocalStatus(carryBases(listed, state.notes), p => draftCache.get(p))
+      const after = prefetch({ ...state, notes: merged }, origin)
+      assert.equal(after.notes[0]!.content, null, 'bug: the sync dropped the only offline copy of the note')
+    } finally {
+      draftCache.delete(SYNC)
+    }
+  })
+})
+
+// =====================================================================
+// 15. A connect that fails to prefetch some notes must not overwrite the
+// directory's record with content-less notes. The walk reads the record the
+// connect just wrote, so a missing restore there cannot be repaired later.
+// =====================================================================
+
+describe('a connect whose prefetch fails keeps the offline copy', () => {
+  const CONN = 'sub/conn.md.gpg'
+  const TEXT = 'cached before the network blip'
+
+  function connectMerge(state: AppState, listed: Note[], fetchContent: (path: string) => string | null): AppState {
+    const withBases = applyLocalStatus(carryBases(listed, state.notes), p => draftCache.get(p))
+    const fetched = withBases.map(n => {
+      if (n.content || draftCache.has(n.path)) return n
+      const content = fetchContent(n.path)
+      return content ? { ...n, content } : n
+    })
+    return { ...state, notes: restoreStillCurrentBlobs(fetched, state.notes) }
+  }
+
+  function cachedState(): AppState {
+    return loadFromCache([
+      makeNote({ name: CONN, path: CONN, sha: 'sha-1', content: b64(TEXT), baseText: TEXT, baseSha: 'sha-1' }),
+    ])
+  }
+
+  it('restores a blob whose SHA has not moved', () => {
+    const state = cachedState()
+    const listed = [makeNote({ name: CONN, path: CONN, sha: 'sha-1', content: null })]
+    const after = connectMerge(state, listed, () => null)
+    assert.equal(after.notes[0]!.content, b64(TEXT), 'the still-current blob survives a failed prefetch')
+  })
+
+  it('regression: carryBases alone leaves the note content-less after a failed prefetch', () => {
+    const state = cachedState()
+    const listed = [makeNote({ name: CONN, path: CONN, sha: 'sha-1', content: null })]
+    const merged = applyLocalStatus(carryBases(listed, state.notes), p => draftCache.get(p))
+    assert.equal(merged[0]!.content, null, 'bug: the connect record drops the only offline copy')
   })
 })
