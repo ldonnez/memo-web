@@ -1,6 +1,12 @@
 import { describe, it } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { cacheNotesToLocalStorage, computeCachedTotals, listCachedNotePaths, loadCachedNotes } from '../lib/util.ts'
+import {
+  cacheNotesToLocalStorage,
+  clearCacheDB,
+  computeCachedTotals,
+  listCachedNotePaths,
+  loadCachedNotes,
+} from '../lib/util.ts'
 
 describe('cacheNotesToLocalStorage / loadCachedNotes', () => {
   it('returns null when IndexedDB is unavailable', async () => {
@@ -55,5 +61,11 @@ describe('computeCachedTotals', () => {
 
   it('does not throw when IndexedDB is unavailable', async () => {
     await assert.doesNotReject(() => computeCachedTotals())
+  })
+})
+
+describe('clearCacheDB', () => {
+  it('does not throw when IndexedDB is unavailable', async () => {
+    await assert.doesNotReject(() => clearCacheDB())
   })
 })

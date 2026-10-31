@@ -621,6 +621,33 @@ describe('walkAllDirsAndPrefetch', () => {
     globalThis.fetch = orig
   })
 
+  it('stops before caching or fetching more directories once cancelled', async () => {
+    const listings: Record<string, Array<Record<string, unknown>>> = {
+      '': [
+        { type: 'dir', name: 'one', path: 'one', sha: 'd1' },
+        { type: 'dir', name: 'two', path: 'two', sha: 'd2' },
+        { type: 'file', name: 'root.md.gpg', path: 'root.md.gpg', sha: 's1', size: 2 },
+      ],
+      one: [{ type: 'file', name: 'a.md.gpg', path: 'one/a.md.gpg', sha: 's2', size: 2 }],
+      two: [{ type: 'file', name: 'b.md.gpg', path: 'two/b.md.gpg', sha: 's3', size: 2 }],
+    }
+    const orig = mockContentEndpoint(listings)
+    const mocked = globalThis.fetch
+    const listingCalls: string[] = []
+    ;(globalThis as any).fetch = async (url: string) => {
+      const pathPart = decodeURIComponent(url.split('/contents/')[1]?.split('?ref=')[0] || '')
+      if (pathPart in listings) listingCalls.push(pathPart)
+      return mocked(url)
+    }
+    try {
+      const totals = await walkAllDirsAndPrefetch(makeConfig(), '', '.md.gpg', () => listingCalls.length >= 1)
+      assert.deepEqual(listingCalls, [''], 'cancelled before the subdirectories are listed')
+      assert.deepEqual(totals, { totalNotes: 1, totalDirs: 2 }, 'partial totals from the one visited directory')
+    } finally {
+      globalThis.fetch = orig
+    }
+  })
+
   it('continues counting other directories when one listing fails', async () => {
     const orig = globalThis.fetch
     const listings: Record<string, Array<Record<string, unknown>>> = {

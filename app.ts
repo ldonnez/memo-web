@@ -52,6 +52,7 @@ import {
   loadCachedNotes,
   computeCachedTotals,
   listCachedNotePaths,
+  clearCacheDB,
   pickBestCachedRecord,
   findMatchRanges,
   breadcrumbCrumbs,
@@ -239,11 +240,17 @@ let state: AppState = {
 }
 
 // ============= CONFIG =============
+// A URL pointing at a different remote than the stored one must not be served
+// the previous repo's cache at startup (the cache key is path-only).
+let repoChangedAtStartup = false
+
 function loadConfig() {
+  let saved: string | null = null
   try {
-    const saved = localStorage.getItem('memoweb_config')
+    saved = localStorage.getItem('memoweb_config')
     if (saved) state = { ...state, config: JSON.parse(saved) }
   } catch {}
+  const storedRepo = repoIdentity(state.config)
   // A stored suffix that is only an earlier *default* follows the default: the
   // notes it wrote are still listed and saved as they are, so the upgrade is
   // invisible except that new notes get the shorter name. Any other suffix is
@@ -265,6 +272,7 @@ function loadConfig() {
       },
     }
   }
+  repoChangedAtStartup = !!saved && repoIdentity(state.config) !== storedRepo
   applyConfigToUI()
 }
 function applyConfigToUI() {
@@ -423,6 +431,11 @@ function submitPassphrase() {
 
 // ============= CONNECT & LIST =============
 const CONNECT_TIMEOUT_MS = 15000
+// Only the newest connect and walk may write the cache. A settings save can
+// start a connect while the previous repo's background walk is still running;
+// without this, that walk would repopulate the cache the switch just cleared.
+let activeConnect: AbortController | null = null
+let walkEpoch = 0
 
 async function connect(background = false, reset = false) {
   const c = state.config
@@ -430,6 +443,11 @@ async function connect(background = false, reset = false) {
     setConnectionStatus('Configure settings first', false)
     return
   }
+  walkEpoch++
+  activeConnect?.abort()
+  const controller = new AbortController()
+  activeConnect = controller
+  const startPath = state.currentBrowsePath
 
   if (!background) {
     setConnectionStatus('Connecting...', false)
@@ -437,13 +455,14 @@ async function connect(background = false, reset = false) {
     // settings save would throw away the notes' merge bases before doConnect's
     // carryBases() runs, so the record it writes would lose them for good.
     if (reset) {
-      state = { ...state, notes: [], dirs: [] }
+      // The IndexedDB cache is keyed by path, not by repo, so it would otherwise
+      // hand the new remote the previous repo's notes (and merge bases).
+      await clearCacheDB()
+      state = { ...state, notes: [], dirs: [], totalNotes: 0, totalDirs: 0 }
       renderNoteList()
     }
   }
 
-  const startPath = state.currentBrowsePath
-  const controller = new AbortController()
   try {
     await withTimeout(doConnect(c, controller.signal), CONNECT_TIMEOUT_MS, () => controller.abort())
   } catch (e) {
@@ -457,20 +476,25 @@ async function connect(background = false, reset = false) {
       setConnectionStatus(`Error: ${errMsg(e)}`, false)
       toast(errMsg(e), 'error')
     }
+  } finally {
+    if (activeConnect === controller) activeConnect = null
   }
 }
 
 function scheduleBackgroundWalk(path: string, ext: string) {
-  setTimeout(
-    () =>
-      walkAllDirsAndPrefetch(state.config, path, ext)
-        .then(({ totalNotes, totalDirs }) => {
-          state = { ...state, totalNotes, totalDirs }
-          setConnectionStatus(`Connected · ${buildStatusText(totalNotes, totalDirs)}`, true)
-        })
-        .catch(e => console.warn('background sync:', e.message)),
-    0,
-  )
+  walkEpoch++
+  const epoch = walkEpoch
+  const cancelled = () => epoch !== walkEpoch
+  setTimeout(() => {
+    if (cancelled()) return
+    walkAllDirsAndPrefetch(state.config, path, ext, cancelled)
+      .then(({ totalNotes, totalDirs }) => {
+        if (cancelled()) return
+        state = { ...state, totalNotes, totalDirs }
+        setConnectionStatus(`Connected · ${buildStatusText(totalNotes, totalDirs)}`, true)
+      })
+      .catch(e => console.warn('background sync:', e.message))
+  }, 0)
 }
 
 async function doConnect(c: Config, signal: AbortSignal) {
@@ -1922,6 +1946,7 @@ async function init() {
   restoreDrafts()
   restorePendingRemoteRefresh()
   if (state.config.ghToken && state.config.ghOwner && state.config.ghRepo) {
+    if (repoChangedAtStartup) await clearCacheDB()
     await loadFromCache(state.config.ghPath || '')
     const urlOrLast = getUrlParam('path') || getLastNotePath()
     const path =

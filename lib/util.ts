@@ -362,6 +362,31 @@ export async function cacheNotesToLocalStorage(notes: Note[], dirs: Dir[], curre
   }
 }
 
+/**
+ * Drop every cached directory. The cache is keyed by path only, so it cannot
+ * tell one remote's notes from another's; switching owner/repo/branch must
+ * discard it rather than serve (and later overwrite) the previous repo's copy.
+ */
+export async function clearCacheDB(): Promise<void> {
+  try {
+    const db = await openCacheDB()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite')
+      tx.objectStore(STORE_NAME).clear()
+      tx.oncomplete = () => {
+        db.close()
+        resolve()
+      }
+      tx.onerror = () => {
+        db.close()
+        reject(tx.error)
+      }
+    })
+  } catch (e) {
+    console.warn('Failed to clear cached notes:', e)
+  }
+}
+
 export function pickBestCachedRecord(records: Array<CachedRecord | null> | null | undefined): CachedRecord | null {
   let best: CachedRecord | null = null
   let bestTs = -1

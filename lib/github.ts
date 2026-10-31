@@ -271,6 +271,7 @@ export async function walkAllDirsAndPrefetch(
   config: Config,
   rootPath: string,
   fileExt?: string,
+  isCancelled?: () => boolean,
 ): Promise<{ totalNotes: number; totalDirs: number }> {
   const dirs: string[] = [rootPath || '']
   const seen = new Set<string>()
@@ -278,6 +279,7 @@ export async function walkAllDirsAndPrefetch(
   let totalDirs = 0
 
   while (dirs.length) {
+    if (isCancelled?.()) return { totalNotes, totalDirs }
     const dir = dirs.shift()!
     if (seen.has(dir)) continue
     seen.add(dir)
@@ -328,6 +330,9 @@ export async function walkAllDirsAndPrefetch(
       // offline copy. Hand back the blobs that are still the remote's.
       const restored = restoreStillCurrentBlobs(withBaselines, prev)
       const merged = carryBases(restored, prev)
+      // A repo switch clears the cache while this walk may still be in flight;
+      // writing the old remote's record now would repopulate what was cleared.
+      if (isCancelled?.()) return { totalNotes, totalDirs }
       for (const n of merged) {
         if (n.content) contentCache.set(n.path, n.content)
       }
