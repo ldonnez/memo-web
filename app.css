@@ -889,18 +889,21 @@ h1 .version {
   }
 }
 
-@supports (-webkit-touch-callout: none) and (background-clip: text) {
+@supports (-webkit-touch-callout: none) {
   @media (display-mode: standalone) {
+    /* iOS 27 draws its status-bar blur over the page. A fixed, opaque strip at
+       the very top makes the system render a solid status bar instead. It must
+       actually paint: the previous background-clip: text made it transparent. */
     .status-bar-strip {
       display: block;
       position: fixed;
       inset: 0 0 auto;
-      height: 11px;
+      height: max(11px, env(safe-area-inset-top, 0px));
       z-index: 101;
       pointer-events: none;
       background-color: var(--surface);
-      -webkit-background-clip: text;
-      background-clip: text;
+      -webkit-transform: translateZ(0);
+      transform: translateZ(0);
     }
   }
 }
