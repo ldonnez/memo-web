@@ -30,7 +30,7 @@ let ghPutFile: (
 ) => Promise<{ content: { sha: string } }>
 let ghDeleteFile: (config: Config, path: string, sha: string, message?: string) => Promise<unknown>
 let fetchAllNotesContent: (config: Config, notes: Note[]) => Promise<Note[]>
-let restoreDraftBaselines: (notes: Note[]) => Note[]
+let restoreDraftBaselines: (notes: Note[], prev?: Note[]) => Note[]
 let walkAllDirsAndPrefetch: (
   config: Config,
   rootPath: string,
@@ -472,13 +472,35 @@ describe('restoreDraftBaselines', () => {
     }
   })
 
-  it('leaves the note alone when no baseline is cached', () => {
+  it('leaves the note alone when no baseline is cached anywhere', () => {
     draftCache.set('notes/drafty.md.gpg', 'my-draft')
     try {
       const restored = restoreDraftBaselines([
         makeNote({ name: 'drafty.md.gpg', path: 'notes/drafty.md.gpg', content: null }),
       ])
       assert.equal(restored[0]!.content, null, 'no baseline → stays null (refresh still flags)')
+    } finally {
+      draftCache.clear()
+    }
+  })
+
+  it('falls back to the previous record when contentCache was pruned', () => {
+    draftCache.set('notes/drafty.md.gpg', 'my-draft')
+    try {
+      const prev = [
+        makeNote({
+          name: 'drafty.md.gpg',
+          path: 'notes/drafty.md.gpg',
+          content: 'pre-edit-blob',
+          sha: 'sha-old',
+        }),
+      ]
+      const restored = restoreDraftBaselines(
+        [makeNote({ name: 'drafty.md.gpg', path: 'notes/drafty.md.gpg', content: null, sha: 'sha-new' })],
+        prev,
+      )
+      assert.equal(restored[0]!.content, 'pre-edit-blob', 'blob survives a pruned contentCache')
+      assert.equal(restored[0]!.sha, 'sha-old', 'stale sha keeps a blind save from overwriting the remote')
     } finally {
       draftCache.clear()
     }

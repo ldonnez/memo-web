@@ -167,14 +167,17 @@ function closestOf<T extends Element>(target: EventTarget | null, selector: stri
   return target instanceof Element ? target.closest<T>(selector) : null
 }
 
-async function loadFromCache(path: string, extraState: Partial<AppState> = {}) {
+async function loadFromCache(path: string, extraState: Partial<AppState> = {}, opts: { fallback?: boolean } = {}) {
+  const { fallback = true } = opts
   let cached = await loadCachedNotes(path || '')
   // A record that EXISTS is the answer for this directory, even when it holds no
   // notes — that is what a folder with only subfolders in it looks like, and it
-  // still carries the subfolders to navigate into. Only a MISSING record falls
-  // back to the most recently cached one, so an empty (or not-yet-walked)
-  // subdirectory can never be answered with some other directory's notes.
-  if (!cached) {
+  // still carries the subfolders to navigate into. A MISSING record may fall
+  // back to the most recently cached one on startup/connect (so a configured
+  // root that was never walked still shows something), but navigation passes
+  // `fallback: false`: answering a tap on an uncached folder with an unrelated
+  // directory's notes is worse than leaving the current view in place.
+  if (!cached && fallback) {
     const candidates = await listCachedNotePaths()
     const records: Array<CachedRecord | null> = []
     for (const key of candidates) {
@@ -425,8 +428,13 @@ async function connect(background = false) {
 
   if (!background) {
     setConnectionStatus('Connecting...', false)
-    state = { ...state, notes: [], dirs: [] }
-    renderNoteList()
+    // Do not blank the sidebar when the open note lives outside the connect
+    // target: doConnect's guard keeps that note and its directory, so clearing
+    // here would leave the user staring at an empty list next to the editor.
+    if (!(state.currentFile && state.currentBrowsePath !== (c.ghPath || ''))) {
+      state = { ...state, notes: [], dirs: [] }
+      renderNoteList()
+    }
   }
 
   const startPath = state.currentBrowsePath
@@ -445,6 +453,19 @@ async function connect(background = false) {
       toast(errMsg(e), 'error')
     }
   }
+}
+
+function scheduleBackgroundWalk(path: string, ext: string) {
+  setTimeout(
+    () =>
+      walkAllDirsAndPrefetch(state.config, path, ext)
+        .then(({ totalNotes, totalDirs }) => {
+          state = { ...state, totalNotes, totalDirs }
+          setConnectionStatus(`Connected · ${buildStatusText(totalNotes, totalDirs)}`, true)
+        })
+        .catch(e => console.warn('background sync:', e.message)),
+    0,
+  )
 }
 
 async function doConnect(c: Config, signal: AbortSignal) {
@@ -476,6 +497,11 @@ async function doConnect(c: Config, signal: AbortSignal) {
   // navigation, but still pull the latest remote content into the open editor.
   if (state.currentFile && state.currentBrowsePath !== path) {
     await refreshOpenNoteContent()
+    // The repo and the open note were reached, so the session is live even
+    // though the root listing was not applied. Without this the status stays
+    // "Offline" and shouldServeFromCache() keeps trusting a stale onLine hint.
+    setConnectionStatus(`Connected · ${buildStatusText(state.totalNotes, state.totalDirs)}`, true)
+    scheduleBackgroundWalk(path, ext)
     return
   }
 
@@ -527,16 +553,7 @@ async function doConnect(c: Config, signal: AbortSignal) {
   // out of the record it is about to overwrite, so it must run AFTER the open note
   // has been refreshed: otherwise it reads the pre-pull record and writes the
   // stale base back over the one the pull just advanced.
-  setTimeout(
-    () =>
-      walkAllDirsAndPrefetch(state.config, path, ext)
-        .then(({ totalNotes, totalDirs }) => {
-          state = { ...state, totalNotes, totalDirs }
-          setConnectionStatus(`Connected · ${buildStatusText(totalNotes, totalDirs)}`, true)
-        })
-        .catch(e => console.warn('background sync:', e.message)),
-    0,
-  )
+  scheduleBackgroundWalk(path, ext)
 }
 
 /**
@@ -816,17 +833,7 @@ async function pullChanges() {
     setConnectionStatus(`Synced · ${buildStatusText(state.totalNotes, state.totalDirs)}`, true)
     renderNoteList()
     await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
-    const basePath = c.ghPath || ''
-    setTimeout(
-      () =>
-        walkAllDirsAndPrefetch(state.config, basePath, ext)
-          .then(({ totalNotes, totalDirs }) => {
-            state = { ...state, totalNotes, totalDirs }
-            setConnectionStatus(`Connected · ${buildStatusText(totalNotes, totalDirs)}`, true)
-          })
-          .catch(e => console.warn('background sync:', e.message)),
-      0,
-    )
+    scheduleBackgroundWalk(c.ghPath || '', ext)
     toast(
       conflicts
         ? `Synced with remote · ${conflicts} note${conflicts === 1 ? '' : 's'} kept local edits`
@@ -928,7 +935,7 @@ function formatDoc() {
 async function openNoteByPath(path: string) {
   let note = state.notes.find(n => n.path === path)
   if (note) {
-    selectNote(path)
+    await selectNote(path)
     return
   }
   const parts = path.split('/')
@@ -939,7 +946,7 @@ async function openNoteByPath(path: string) {
       // dirty-compare baseline refreshOpenNoteContent relies on.
       await navigateToDir(dir, { prefetch: false })
       note = state.notes.find(n => n.path === path)
-      if (note) selectNote(path)
+      if (note) await selectNote(path)
     } catch (e) {
       toast(`Could not open note: ${errMsg(e)}`, 'error')
     }
@@ -954,19 +961,15 @@ async function openNoteByPath(path: string) {
  * directory has never been cached.
  */
 async function navigateToCachedDir(dirPath: string): Promise<boolean> {
-  state = { ...state, currentFile: null, isDirty: false }
+  const loaded = await loadFromCache(dirPath || '', {}, { fallback: false })
+  if (!loaded) return false
+  if (state.currentFile && state.isDirty) saveDraft(state.currentFile.path, state.currentContent)
   closeEditor()
-  return loadFromCache(dirPath || '')
+  return true
 }
 
 async function navigateToDir(dirPath: string, opts: { prefetch?: boolean } = {}) {
   const { prefetch = true } = opts
-  const dirtyFile = state.currentFile
-  if (dirtyFile && state.isDirty) {
-    saveDraft(dirtyFile.path, state.currentContent)
-    closeEditor()
-  }
-
   const c = state.config
   const startPath = state.currentBrowsePath
 
@@ -978,6 +981,12 @@ async function navigateToDir(dirPath: string, opts: { prefetch?: boolean } = {})
       setConnectionStatus('Offline · nothing cached for this folder', false)
     }
     return
+  }
+
+  const dirtyFile = state.currentFile
+  if (dirtyFile && state.isDirty) {
+    saveDraft(dirtyFile.path, state.currentContent)
+    closeEditor()
   }
 
   setConnectionStatus('Loading...', state.connected)

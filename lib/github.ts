@@ -243,17 +243,27 @@ export async function fetchAllNotesContent(config: Config, notes: Note[]): Promi
  * user opened. Keep the merge base alongside it — both describe "what we last
  * synced for this path" and are only advanced together, on a decrypted
  * observation.
+ *
+ * The previous cache record is the fallback because `contentCache` is
+ * session-only and may have been pruned (e.g. a connect to the root clears the
+ * subtree): after a reload the record is the only place a drafted note's
+ * pre-edit blob survives. Restoring its SHA too keeps a later save from
+ * silently overwriting a remote change — the stale SHA is what turns that save
+ * into a 409 instead.
  */
-export function restoreDraftBaselines(notes: Note[]): Note[] {
+export function restoreDraftBaselines(notes: Note[], prev: Note[] = []): Note[] {
   // Only the encrypted blob is recoverable here, so `originalText` stays as the
   // listing left it. That is fine: selectNote() re-points a drafted note's
   // originalText at the merge base when it opens, which is the only place that
   // has the plaintext (decrypting every note on a background walk would be
   // wasteful, and it is what keeps "discard" from emptying the note).
+  const byPath = new Map(prev.map(n => [n.path, n]))
   return notes.map(n => {
     if (!draftCache.has(n.path)) return n
-    const baseline = contentCache.get(n.path)
-    return baseline ? { ...n, content: baseline } : n
+    const old = byPath.get(n.path)
+    const baseline = contentCache.get(n.path) ?? old?.content
+    if (!baseline) return n
+    return { ...n, content: baseline, sha: old?.sha ?? n.sha }
   })
 }
 
@@ -301,17 +311,17 @@ export async function walkAllDirsAndPrefetch(
       }))
 
       const withContent = await fetchAllNotesContent(config, notes)
-      // Drafted notes are skipped by fetchAllNotesContent, so restore their
-      // baseline (set at init from loadFromCache) before caching the dir record —
-      // otherwise the next reload reads a null baseline and the pull decision
-      // can never settle correctly.
-      const withBaselines = restoreDraftBaselines(withContent)
       // The merge base for these paths lives in this dir's own cache record (it
       // is only ever written when a note in this dir is opened, saved or
       // refreshed). Re-reading the record keeps the base across a background
       // walk, which rebuilds every note object from a fresh listing.
       const existing = await loadCachedNotes(dir)
       const prev = existing?.notes ?? []
+      // Drafted notes are skipped by fetchAllNotesContent, so restore their
+      // baseline before caching the dir record — otherwise the next reload reads
+      // a null baseline and the pull decision can never settle correctly. The
+      // previous record is the fallback when contentCache no longer has the blob.
+      const withBaselines = restoreDraftBaselines(withContent, prev)
       // The record about to be overwritten is the only place a blob survives a
       // reload, and a prefetch that failed (offline blip, rate limit) leaves the
       // note content-less — so the write would silently drop the directory's

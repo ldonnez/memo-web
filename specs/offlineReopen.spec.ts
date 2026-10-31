@@ -70,9 +70,29 @@ const SUBDIR = snapshot('sub', ['note.md.gpg'])
 const DOCS = snapshot('docs', ['doc.md.gpg'])
 const NESTED = snapshot('a/b', ['nested.md.gpg'])
 
-/** Mirrors app.ts loadFromCache(path): loads the exact record for `path`, preserving currentFile (spread of ...state). */
-function loadFromCache(state: SnapState, records: Record<string, RecordData>, path: string): SnapState {
-  const rec = records[path || '(root)']
+/**
+ * Mirrors app.ts loadFromCache(path, extra, opts): loads the exact record for
+ * `path`, preserving currentFile (spread of ...state). A miss falls back to the
+ * newest cached record only when `fallback` is true — startup/connect — because
+ * navigation must never answer an uncached folder with an unrelated directory.
+ */
+function loadFromCache(
+  state: SnapState,
+  records: Record<string, RecordData>,
+  path: string,
+  opts: { fallback?: boolean } = {},
+): SnapState {
+  const { fallback = true } = opts
+  let rec = records[path || '(root)']
+  if (!rec && fallback) {
+    rec = Object.values(records)
+      .filter(r => r.notes.length > 0)
+      .sort(
+        (a, b) =>
+          ((b as RecordData & { timestamp?: number }).timestamp || 0) -
+          ((a as RecordData & { timestamp?: number }).timestamp || 0),
+      )[0]
+  }
   if (!rec) return state
   return {
     ...state, // warns + currentFile preserved, matching `state = { ...state, notes, dirs, ... }`
@@ -101,7 +121,7 @@ async function openNoteByPath(state: SnapState, records: Record<string, RecordDa
   if (parts.length > 1) {
     const dir = parts.slice(0, -1).join('/')
     // Mirrors navigateToDir(dir) offline: ghListDir throws -> catch -> loadFromCache(dir)
-    next = loadFromCache(next, records, dir)
+    next = loadFromCache(next, records, dir, { fallback: false })
     const note = next.notes.find(n => n.path === path)
     if (note) next = selectNote(next, path)
   }
@@ -126,7 +146,7 @@ async function navigateToDir(
   const { onLine = true, connected = false } = net
   const startPath = state.currentBrowsePath
   // Mirrors app.ts shouldServeFromCache().
-  if (!onLine && !connected) return loadFromCache(state, records, dir || '')
+  if (!onLine && !connected) return loadFromCache(state, records, dir || '', { fallback: false })
   requests.push(dir)
   // Simulate ghListDir failing despite the browser saying we are online.
   try {
@@ -134,7 +154,7 @@ async function navigateToDir(
   } catch {
     // navigateToDir catch: if path changed during fetch, bail.
     if (state.currentBrowsePath !== startPath) return state
-    return loadFromCache(state, records, dir || '')
+    return loadFromCache(state, records, dir || '', { fallback: false })
   }
 }
 
@@ -622,14 +642,24 @@ describe('offline reopen — loadFromCache edge cases', () => {
     assert.equal(after.notes.length, 1, 'subdir notes loaded')
   })
 
-  it('loadFromCache on a cache miss leaves state unchanged (mock mirrors app fallback semantics)', () => {
+  it('navigation miss (fallback:false) leaves state unchanged instead of showing another dir', () => {
     let state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
     state = loadFromCache(state, RECORDS, '(root)')
-    // Path with no record and no fallback in the mock → state unchanged.
     const before = { ...state, currentFile: state.currentFile }
-    const after = loadFromCache(state, RECORDS, 'unknown')
+    const after = loadFromCache(state, RECORDS, 'unknown', { fallback: false })
     assert.deepEqual(after.notes, before.notes, 'notes unchanged on cache miss')
     assert.equal(after.currentBrowsePath, before.currentBrowsePath, 'browse path unchanged on cache miss')
+  })
+
+  it('startup/connect miss still falls back to the newest cached record', () => {
+    const state: SnapState = { notes: [], dirs: [], currentBrowsePath: '', currentFile: null }
+    // No record for the configured root, but a subdir was cached earlier.
+    const after = loadFromCache(state, { sub: SUBDIR }, '(root)')
+    assert.equal(after.currentBrowsePath, 'sub', 'fallback restores the cached subdir')
+    assert.deepEqual(
+      after.notes.map(n => n.path),
+      ['sub/note.md.gpg'],
+    )
   })
 
   it('loadFromCache on an empty cache leaves state unchanged', () => {
