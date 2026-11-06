@@ -107,6 +107,8 @@ import DOMPurify from 'dompurify'
 import { registerSW } from 'virtual:pwa-register'
 import { EditorView, type KeyBinding } from '@codemirror/view'
 import type { CachedRecord, Config, Dir, Note } from './lib/types.ts'
+import { editorActionState } from './lib/editorActions.ts'
+import { normalizeTheme, resolveTheme, THEME_STORAGE_KEY, themeColor, type Theme } from './lib/theme.ts'
 
 registerSW({ immediate: true, onRegisteredSW: () => {} })
 
@@ -130,6 +132,22 @@ let cm: EditorView | null = null
 let taskIdx = 0
 let pendingRemoteRefresh: { path: string; content: string; sha: string } | null = null
 const PENDING_REFRESH_KEY = 'memoweb_pending_refresh'
+
+function storedThemeValue(): string | null {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function systemTheme(): Theme {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches
+    ? 'dark'
+    : 'light'
+}
+let currentTheme: Theme = resolveTheme(storedThemeValue(), systemTheme() === 'dark')
+let moreMenuOpen = false
 
 function byId(id: string): HTMLElement | null {
   return document.getElementById(id)
@@ -318,6 +336,7 @@ function onCryptoModeChange() {
 
 // ============= SETTINGS MODAL =============
 function openSettings() {
+  byEl<HTMLSelectElement>('settingsTheme').value = normalizeTheme(storedThemeValue()) ?? 'system'
   byEl<HTMLElement>('settingsModal').classList.add('open')
 }
 function closeSettings() {
@@ -330,6 +349,7 @@ function switchTab(tabId: string) {
 
 async function saveSettings() {
   const previousRepo = repoIdentity(state.config)
+  setThemePreference(byEl<HTMLSelectElement>('settingsTheme').value)
   saveConfigToState()
   try {
     localStorage.setItem('memoweb_config', JSON.stringify(state.config))
@@ -703,8 +723,7 @@ function adoptRemoteContent(openFile: Note, content: string, decrypted: string, 
   // 'up-to-date' path reaches here from a dirty editor whose edit the remote
   // already had, and a still-enabled Save would push the same text again.
   renderEditorHeader(false)
-  byEl<HTMLButtonElement>('discardBtn').style.visibility = 'hidden'
-  byEl<HTMLButtonElement>('saveBtn').disabled = true
+  updateEditorActions()
   return cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
 }
 
@@ -718,13 +737,99 @@ function persistedRefreshFor(path: string): PendingRefresh | null {
 }
 
 function syncRemoteRefreshBtn() {
-  const btn = byId('remoteRefreshBtn')
-  if (!btn) return
-  const openPath = state.currentFile?.path
+  updateEditorActions()
+}
+
+function setMoreMenu(open: boolean) {
+  moreMenuOpen = open
+  byId('moreMenu')?.classList.toggle('open', open)
+  byId('moreBtn')?.setAttribute('aria-expanded', String(open))
+}
+
+function toggleMoreMenu() {
+  setMoreMenu(!moreMenuOpen)
+}
+
+/**
+ * The editor header is a view of state: Save, Preview/Edit and the secondary
+ * actions menu are derived from the open note so no caller has to remember to
+ * re-enable or hide a button after a state change.
+ */
+function updateEditorActions() {
+  const file = state.currentFile
+  const noteOpen = !!file
+  if (document.body.classList.contains('note-open') !== noteOpen) {
+    document.body.classList.toggle('note-open', noteOpen)
+    requestAnimationFrame(syncHeaderH)
+  }
   // Derive from BOTH memory and the persisted payload: even if something wiped
   // pendingRemoteRefresh during a reopen, the stored warning still shows.
-  const show = !!openPath && (pendingRemoteRefresh?.path === openPath || persistedRefreshFor(openPath) !== null)
-  btn.style.visibility = show ? 'visible' : 'hidden'
+  const remotePending = !!file && (pendingRemoteRefresh?.path === file.path || persistedRefreshFor(file.path) !== null)
+  const actions = editorActionState({
+    hasFile: !!file,
+    isDirty: state.isDirty,
+    remotePending,
+    hasSha: !!file?.sha,
+  })
+
+  const save = byId('saveBtn') as HTMLButtonElement | null
+  if (save) save.disabled = !actions.canSave
+
+  const preview = byId('previewToggle') as HTMLButtonElement | null
+  if (preview) {
+    const label = state.showPreview ? 'Edit note' : 'Show preview'
+    preview.disabled = !file
+    preview.setAttribute('aria-pressed', String(state.showPreview))
+    preview.setAttribute('aria-label', label)
+    preview.title = label
+    const mode = state.showPreview ? 'edit' : 'preview'
+    if (preview.dataset['mode'] !== mode) {
+      preview.dataset['mode'] = mode
+      preview.innerHTML = state.showPreview ? '<span class="label">Edit</span>' : '<span class="label">Preview</span>'
+    }
+  }
+
+  const menuPreview = byId('menuPreviewBtn') as HTMLButtonElement | null
+  if (menuPreview) {
+    const label = state.showPreview ? 'Edit note' : 'Preview note'
+    menuPreview.disabled = !file
+    menuPreview.dataset['mode'] = state.showPreview ? 'edit' : 'preview'
+    menuPreview.setAttribute('aria-label', label)
+    const menuLabel = menuPreview.querySelector('.label')
+    if (menuLabel) menuLabel.textContent = label
+  }
+  const menuSearch = byId('menuSearchBtn') as HTMLButtonElement | null
+  if (menuSearch) menuSearch.disabled = !file
+
+  const remote = byId('remoteRefreshBtn') as HTMLButtonElement | null
+  if (remote) remote.hidden = !actions.showRemote
+
+  const discard = byId('discardBtn') as HTMLButtonElement | null
+  if (discard) discard.hidden = !actions.showDiscard
+
+  const del = byId('deleteBtn') as HTMLButtonElement | null
+  if (del) del.disabled = !actions.canDelete
+
+  const combinedMenu = noteOpen && window.innerWidth <= 768
+  const menuAvailable = actions.hasMenuItems || combinedMenu
+  const more = byId('moreBtn') as HTMLButtonElement | null
+  if (more) more.hidden = !menuAvailable
+  if (!menuAvailable) setMoreMenu(false)
+}
+
+function resetPreview() {
+  const wasPreview = state.showPreview
+  if (wasPreview) state = { ...state, showPreview: false }
+  const container = byId('previewContainer')
+  if (container) container.style.display = 'none'
+  const editor = byId('editor')
+  if (editor) editor.classList.remove('preview-mode')
+  const pane = byId('previewPane')
+  if (pane) pane.innerHTML = ''
+  const search = byId('previewSearch')
+  if (search) search.style.display = 'none'
+  if (wasPreview) clearSearch()
+  updateEditorActions()
 }
 
 function setPendingRemoteRefresh(pr: PendingRefresh) {
@@ -796,9 +901,8 @@ async function applyPendingRemoteRefresh() {
     // the old one and the next load starts the divergence dance again.
     await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
     renderEditorHeader(false)
-    byEl<HTMLButtonElement>('discardBtn').style.visibility = 'hidden'
     byEl<HTMLElement>('editorStatus').textContent = ''
-    byEl<HTMLButtonElement>('saveBtn').disabled = true
+    updateEditorActions()
     renderNoteList()
     toast('Loaded latest version from remote', 'info')
   } catch (e) {
@@ -1085,6 +1189,13 @@ async function selectNote(path: string) {
   if (state.currentFile && state.isDirty) {
     saveDraft(state.currentFile.path, state.currentContent)
   }
+  // Stay in preview while the next note decrypts. Switching back to the editor
+  // here makes the editor flash on screen for every note navigation.
+  if (state.showPreview) {
+    clearSearch()
+    byEl<HTMLElement>('previewSearch').style.display = 'none'
+  }
+  setMoreMenu(false)
 
   setUrlParams({ path: note.path })
   saveLastNotePath(note.path)
@@ -1148,11 +1259,8 @@ async function selectNote(path: string) {
         isDirty: true,
       }
       renderEditorHeader(true)
-      byEl<HTMLButtonElement>('discardBtn').style.visibility = 'visible'
       byEl<HTMLElement>('editorStatus').textContent = ''
-      byEl<HTMLButtonElement>('saveBtn').disabled = false
-      byEl<HTMLButtonElement>('deleteBtn').disabled = false
-      updatePreview()
+      openInPreview()
       renderNoteList()
       return
     }
@@ -1162,8 +1270,7 @@ async function selectNote(path: string) {
   byEl<HTMLElement>('editorStatus').textContent = 'Decrypting...'
   state = { ...state, originalContent: '' }
   setContent('')
-  byEl<HTMLButtonElement>('saveBtn').disabled = true
-  byEl<HTMLButtonElement>('deleteBtn').disabled = true
+  updateEditorActions()
 
   try {
     // Fetch from GitHub if not cached
@@ -1196,10 +1303,7 @@ async function selectNote(path: string) {
     await cacheNotesToLocalStorage(state.notes, state.dirs, state.currentBrowsePath)
     setContent(decrypted)
     byEl<HTMLElement>('editorStatus').textContent = ''
-    byEl<HTMLButtonElement>('saveBtn').disabled = true
-    byEl<HTMLButtonElement>('deleteBtn').disabled = false
-
-    updatePreview()
+    openInPreview()
   } catch (e) {
     byEl<HTMLElement>('editorStatus').textContent = `❌ ${errMsg(e)}`
     toast(`Failed to decrypt: ${errMsg(e)}`, 'error')
@@ -1207,11 +1311,19 @@ async function selectNote(path: string) {
 }
 
 function closeEditor() {
-  state = { ...state, currentFile: null, isDirty: false }
+  state = { ...state, currentFile: null, isDirty: false, showPreview: false }
   clearUrlPath()
   clearLastNotePath()
   byEl<HTMLElement>('placeholder').style.display = 'flex'
-  byEl<HTMLElement>('editor').style.display = 'none'
+  const editor = byEl<HTMLElement>('editor')
+  editor.style.display = 'none'
+  editor.classList.remove('preview-mode')
+  byEl<HTMLElement>('previewContainer').style.display = 'none'
+  byEl<HTMLElement>('previewSearch').style.display = 'none'
+  byEl<HTMLElement>('previewPane').innerHTML = ''
+  clearSearch()
+  setMoreMenu(false)
+  updateEditorActions()
   renderNoteList()
 }
 
@@ -1242,12 +1354,11 @@ document.addEventListener('DOMContentLoaded', () => {
         run: () => (cm && smartEnter(cm, { formatTable, onEditorInput }) === PASS ? false : true),
       },
     ]
-    const rootStyle = getComputedStyle(document.documentElement)
     cm = createEditor({
       parent: host,
       initialValue: '',
       onChange: onEditorInput,
-      themeName: rootStyle.getPropertyValue('--bg').trim() === '#ffffff' ? 'latte' : 'frappe',
+      themeName: currentTheme === 'light' ? 'latte' : 'frappe',
       keymapBindings: bindings,
     })
     ta.style.display = 'none'
@@ -1285,10 +1396,15 @@ document.addEventListener('DOMContentLoaded', () => {
       if (state.currentFile) toggleSearch()
     }
     if (e.key === 'Escape') {
+      if (moreMenuOpen) {
+        setMoreMenu(false)
+        byId('moreBtn')?.focus()
+        return
+      }
       const editorSearch = byEl<HTMLElement>('editorSearch')
       const previewSearch = byEl<HTMLElement>('previewSearch')
       if (editorSearch && editorSearch.style.display !== 'none') {
-        toggleSearch()
+        toggleEditorSearch()
       } else if (previewSearch && previewSearch.style.display !== 'none') {
         togglePreviewSearch()
       }
@@ -1303,7 +1419,11 @@ document.addEventListener('DOMContentLoaded', () => {
  * exactly what happened to a freshly created note.
  */
 function renderEditorHeader(dirty = state.isDirty) {
-  byEl<HTMLElement>('editorFilename').textContent = state.currentFile?.name ?? ''
+  const path = state.currentFile?.path ?? ''
+  const filename = byEl<HTMLElement>('editorFilename')
+  filename.textContent = path
+  filename.title = path
+  filename.setAttribute('aria-label', path ? `Note path: ${path}` : '')
   byEl<HTMLElement>('editorDirty').style.visibility = dirty ? 'visible' : 'hidden'
 }
 
@@ -1321,25 +1441,33 @@ function onEditorInput() {
     if (result.isDirty) saveDraft(state.currentFile.path, newContent)
     else removeDraft(state.currentFile.path)
   }
-  byEl<HTMLButtonElement>('saveBtn').disabled = !result.isDirty
   byEl<HTMLElement>('editorStatus').textContent = ''
-  byEl<HTMLButtonElement>('discardBtn').style.visibility = result.isDirty ? 'visible' : 'hidden'
+  updateEditorActions()
   renderEditorHeader(result.isDirty)
   renderNoteList()
   if (state.showPreview) updatePreview(false)
 }
 
+function openInPreview() {
+  if (!state.showPreview) togglePreview()
+  else updatePreview()
+}
+
 function togglePreview() {
   state = { ...state, showPreview: !state.showPreview }
-  const pc = byEl<HTMLElement>('previewContainer')
-  pc.style.display = state.showPreview ? 'flex' : 'none'
-  byEl<HTMLButtonElement>('previewToggle').disabled = state.showPreview
-  byEl<HTMLButtonElement>('previewToggle').innerHTML = '👁️ <span class="label">Preview</span>'
+  const editorEl = byEl<HTMLElement>('editor')
+  const preview = byEl<HTMLElement>('previewContainer')
+  clearSearch()
+  editorEl.classList.toggle('preview-mode', state.showPreview)
+  preview.style.display = state.showPreview ? 'flex' : 'none'
   if (state.showPreview) {
+    byEl<HTMLElement>('editorSearch').style.display = 'none'
     updatePreview()
   } else {
+    byEl<HTMLElement>('previewSearch').style.display = 'none'
     byEl<HTMLElement>('previewPane').innerHTML = ''
   }
+  updateEditorActions()
   const editor = cm
   if (editor) setTimeout(() => editor.requestMeasure(), 50)
 }
@@ -1397,6 +1525,11 @@ function debouncedSearch(query: string, forcePreview: boolean) {
 }
 
 function toggleSearch() {
+  if (state.showPreview) togglePreviewSearch()
+  else toggleEditorSearch()
+}
+
+function toggleEditorSearch() {
   const el = byEl<HTMLElement>('editorSearch')
   if (el.style.display !== 'none') {
     el.style.display = 'none'
@@ -1580,7 +1713,7 @@ function discardChanges() {
 
   setContent(result.currentContent)
   byEl<HTMLElement>('editorStatus').textContent = ''
-  byEl<HTMLButtonElement>('discardBtn').style.visibility = 'hidden'
+  updateEditorActions()
   updatePreview()
   renderNoteList()
   toast('Changes discarded', 'info')
@@ -1611,12 +1744,9 @@ async function saveNote() {
     toast('Note saved successfully', 'success')
     clearRemoteRefresh()
     renderEditorHeader(false)
-    byEl<HTMLButtonElement>('discardBtn').style.visibility = 'hidden'
-    // A freshly created note had no blob to delete, so newNote() disables this —
-    // and only selectNote() ever turns it back on. The note exists now, with the
-    // sha the PUT returned, so the button has to follow the state.
-    byEl<HTMLButtonElement>('deleteBtn').disabled = false
-    btn.disabled = true
+    // A freshly created note had no blob to delete; the note now exists with the
+    // sha the PUT returned, so the menu follows the state.
+    updateEditorActions()
     renderNoteList()
   } catch (e) {
     const msg = errMsg(e)
@@ -1630,9 +1760,9 @@ async function saveNote() {
         : `Save failed: ${msg}`,
       'error',
     )
-    btn.disabled = false
   } finally {
     btn.innerHTML = origHTML
+    updateEditorActions()
   }
 }
 
@@ -1745,6 +1875,8 @@ async function createNewNote() {
   if (mode === 'password') setNotePassphrase(path, passphrase)
   closeNewNoteModal()
 
+  resetPreview()
+  setMoreMenu(false)
   state = { ...state, currentFile: null, isDirty: false }
 
   byEl<HTMLElement>('placeholder').style.display = 'none'
@@ -1752,8 +1884,6 @@ async function createNewNote() {
   clearRemoteRefresh()
   byEl<HTMLElement>('editorStatus').textContent = '🆕 New note'
   setContent(`# ${stem}\n\n`)
-  byEl<HTMLButtonElement>('saveBtn').disabled = false
-  byEl<HTMLButtonElement>('deleteBtn').disabled = true
   const currentContent = getContent()
   state = { ...state, currentContent, originalContent: '', isDirty: true }
 
@@ -1778,6 +1908,7 @@ async function createNewNote() {
 
   // Last: the header can only be rendered once `currentFile` names the note.
   renderEditorHeader(true)
+  updateEditorActions()
   renderNoteList()
   updatePreview()
 }
@@ -1819,30 +1950,21 @@ function toast(message: string, type: 'info' | 'error' | 'success' | 'warning' =
   }, 4000)
 }
 
-function toggleTheme() {
-  const root = document.documentElement
-  const isDark =
-    root.style.getPropertyValue('--bg') === '#ffffff' ||
-    getComputedStyle(root).getPropertyValue('--bg').trim() === '#ffffff'
-  if (isDark) {
-    root.style.setProperty('--bg', '#0d1117')
-    root.style.setProperty('--surface', '#161b22')
-    root.style.setProperty('--surface-2', '#21262d')
-    root.style.setProperty('--border', '#30363d')
-    root.style.setProperty('--text', '#e6edf3')
-    root.style.setProperty('--text-muted', '#8b949e')
-    byEl<HTMLButtonElement>('themeBtn').textContent = '🌙'
-    if (cm) setTheme(cm, 'frappe')
-  } else {
-    root.style.setProperty('--bg', '#ffffff')
-    root.style.setProperty('--surface', '#f6f8fa')
-    root.style.setProperty('--surface-2', '#eaeef2')
-    root.style.setProperty('--border', '#d0d7de')
-    root.style.setProperty('--text', '#1f2328')
-    root.style.setProperty('--text-muted', '#656d76')
-    byEl<HTMLButtonElement>('themeBtn').textContent = '☀️'
-    if (cm) setTheme(cm, 'latte')
-  }
+function applyTheme(theme: Theme) {
+  document.documentElement.setAttribute('data-theme', theme)
+  const meta = document.querySelector('meta[name="theme-color"]')
+  if (meta) meta.setAttribute('content', themeColor(theme))
+  if (cm) setTheme(cm, theme === 'light' ? 'latte' : 'frappe')
+}
+
+function setThemePreference(preference: string | null) {
+  const explicit = normalizeTheme(preference)
+  try {
+    if (explicit) localStorage.setItem(THEME_STORAGE_KEY, explicit)
+    else localStorage.removeItem(THEME_STORAGE_KEY)
+  } catch {}
+  currentTheme = explicit ?? systemTheme()
+  applyTheme(currentTheme)
 }
 
 function sidebarSearch(query: string) {
@@ -1894,6 +2016,7 @@ function sidebarSearch(query: string) {
       div.className = 'note-item search-injected'
       div.setAttribute('data-path', n.path)
       div.setAttribute('data-type', 'file')
+      div.title = n.path
       div.style.cursor = 'pointer'
       div.innerHTML = `<span class="name">📄 ${escHtml(n.name)}</span><span style="font-size:11px;color:var(--text-muted)">${escHtml(dir)}</span>`
       frag.appendChild(div)
@@ -1907,11 +2030,15 @@ function toggleSidebar() {
   const overlay = byEl<HTMLElement>('sidebarOverlay')
   const open = sidebar.classList.toggle('open')
   overlay.classList.toggle('open', open)
+  byId('menuBtn')?.setAttribute('aria-expanded', String(open))
+  byId('mobileMenuBtn')?.setAttribute('aria-expanded', String(open))
 }
 
-// Keep --header-h in sync with actual header height
+// Keep --header-h in sync with the editor bar when it is the top of the page.
 function syncHeaderH() {
-  const h = (document.querySelector('header') as HTMLElement).offsetHeight
+  const combined = window.innerWidth <= 768 && document.body.classList.contains('note-open')
+  const el = combined ? document.querySelector<HTMLElement>('.editor-header') : null
+  const h = el?.offsetHeight ?? 0
   document.documentElement.style.setProperty('--header-h', h + 'px')
 }
 document.addEventListener('DOMContentLoaded', syncHeaderH)
@@ -1927,8 +2054,9 @@ window.addEventListener('online', () => {
   }
 })
 
-// Close sidebar when selecting a note on mobile
+// Close the editor overflow menu and the mobile sidebar when tapping away.
 document.addEventListener('click', e => {
+  if (moreMenuOpen && !closestOf<HTMLElement>(e.target, '.more-wrap')) setMoreMenu(false)
   const sidebar = byEl<HTMLElement>('sidebar')
   if (
     window.innerWidth <= 768 &&
@@ -1939,7 +2067,16 @@ document.addEventListener('click', e => {
   }
 })
 
+// An explicit choice wins forever; until the user makes one, follow the OS.
+const themeMedia = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null
+themeMedia?.addEventListener('change', e => {
+  if (normalizeTheme(storedThemeValue()) !== null) return
+  currentTheme = e.matches ? 'dark' : 'light'
+  applyTheme(currentTheme)
+})
+
 // ============= INIT =============
+applyTheme(currentTheme)
 loadConfig()
 
 async function init() {
@@ -1966,13 +2103,13 @@ init()
 function bindEvents() {
   // Header
   byId('menuBtn')?.addEventListener('click', toggleSidebar)
-  byId('pullBtn')?.addEventListener('click', pullChanges)
-  byId('settingsBtn')?.addEventListener('click', openSettings)
-  byId('themeBtn')?.addEventListener('click', toggleTheme)
+  byId('mobileMenuBtn')?.addEventListener('click', toggleSidebar)
 
   // Sidebar
   byId('sidebarOverlay')?.addEventListener('click', toggleSidebar)
   byId('newNoteBtn')?.addEventListener('click', newNote)
+  byId('sidebarPullBtn')?.addEventListener('click', pullChanges)
+  byId('sidebarSettingsBtn')?.addEventListener('click', openSettings)
   byId('sidebarSearch')?.addEventListener('input', e => {
     byEl<HTMLElement>('sidebarSearchClear').classList.toggle('is-hidden', !(e.target as HTMLInputElement).value)
     sidebarSearch((e.target as HTMLInputElement).value)
@@ -2003,7 +2140,6 @@ function bindEvents() {
   byId('quoteBtn')?.addEventListener('click', () => insertMarkdown('> ', '', cm, onEditorInput))
   byId('dateBtn')?.addEventListener('click', () => insertTimestamp(cm, onEditorInput))
   byId('formatBtn')?.addEventListener('click', formatDoc)
-  byId('toolbarSearchBtn')?.addEventListener('click', toggleSearch)
 
   // Editor search
   byId('searchInput')?.addEventListener('input', e => {
@@ -2024,18 +2160,33 @@ function bindEvents() {
   })
   byId('editorSearchPrev')?.addEventListener('click', searchPrev)
   byId('editorSearchNext')?.addEventListener('click', searchNext)
-  byId('editorSearchClose')?.addEventListener('click', toggleSearch)
+  byId('editorSearchClose')?.addEventListener('click', toggleEditorSearch)
 
   // Editor header actions
   byId('previewToggle')?.addEventListener('click', togglePreview)
-  byId('discardBtn')?.addEventListener('click', discardChanges)
-  byId('remoteRefreshBtn')?.addEventListener('click', applyPendingRemoteRefresh)
+  byId('searchBtn')?.addEventListener('click', toggleSearch)
   byId('saveBtn')?.addEventListener('click', saveNote)
-  byId('deleteBtn')?.addEventListener('click', deleteNote)
-
-  // Preview header
-  byId('previewSearchBtn')?.addEventListener('click', togglePreviewSearch)
-  byId('previewCloseBtn')?.addEventListener('click', togglePreview)
+  byId('moreBtn')?.addEventListener('click', toggleMoreMenu)
+  byId('menuSearchBtn')?.addEventListener('click', () => {
+    setMoreMenu(false)
+    toggleSearch()
+  })
+  byId('menuPreviewBtn')?.addEventListener('click', () => {
+    setMoreMenu(false)
+    togglePreview()
+  })
+  byId('discardBtn')?.addEventListener('click', () => {
+    setMoreMenu(false)
+    discardChanges()
+  })
+  byId('remoteRefreshBtn')?.addEventListener('click', () => {
+    setMoreMenu(false)
+    applyPendingRemoteRefresh()
+  })
+  byId('deleteBtn')?.addEventListener('click', () => {
+    setMoreMenu(false)
+    deleteNote()
+  })
 
   // Preview search
   byId('previewSearchInput')?.addEventListener('input', e => {

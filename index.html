@@ -35,46 +35,57 @@
   </head>
   <body>
     <div class="status-bar-strip" aria-hidden="true"></div>
-    <header>
-      <button class="menu-btn" id="menuBtn" aria-label="Toggle sidebar">
-        <svg
-          viewBox="0 0 24 24"
-          width="16"
-          height="16"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"
-          stroke-linecap="round"
-        >
-          <line x1="3" y1="6" x2="21" y2="6" />
-          <line x1="3" y1="12" x2="21" y2="12" />
-          <line x1="3" y1="18" x2="21" y2="18" />
-        </svg>
-      </button>
-      <!-- prettier-ignore -->
-      <h1><span>🔐</span> Memo web <span class="version">v0.9.6 <!-- x-release-please-version --></span></h1>
-      <div class="header-actions">
-        <span
-          id="connectionStatus"
-          style="font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 4px"
-          ><span>⚪</span><span class="label">Not connected</span></span
-        >
-        <button class="btn btn-sm" id="pullBtn" title="Sync with remote">🔄</button>
-        <button class="btn btn-sm" id="settingsBtn">⚙️</button>
-        <button class="btn btn-sm" id="themeBtn">🌙</button>
-      </div>
-    </header>
+    <button
+      type="button"
+      class="menu-btn floating-menu-btn"
+      id="menuBtn"
+      aria-label="Toggle sidebar"
+      aria-expanded="false"
+      aria-controls="sidebar"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        width="16"
+        height="16"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+        stroke-linecap="round"
+      >
+        <line x1="3" y1="6" x2="21" y2="6" />
+        <line x1="3" y1="12" x2="21" y2="12" />
+        <line x1="3" y1="18" x2="21" y2="18" />
+      </svg>
+    </button>
 
     <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
     <div class="container">
       <!-- Sidebar -->
       <div class="sidebar" id="sidebar">
-        <div class="sidebar-header" style="flex-direction: column; align-items: stretch; gap: 6px">
-          <div style="display: flex; align-items: center; justify-content: space-between">
+        <div class="sidebar-header">
+          <div class="sidebar-title-row">
             <h2 id="sidebarTitle">Notes</h2>
-            <div style="display: flex; gap: 4px">
-              <button class="btn btn-sm btn-primary" id="newNoteBtn" disabled>+ New</button>
+            <div class="sidebar-actions">
+              <button
+                type="button"
+                class="btn btn-sm sidebar-action-btn"
+                id="sidebarPullBtn"
+                title="Sync with remote"
+                aria-label="Sync with remote"
+              >
+                Sync
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm sidebar-action-btn"
+                id="sidebarSettingsBtn"
+                title="Settings"
+                aria-label="Settings"
+              >
+                Settings
+              </button>
+              <button class="btn btn-sm btn-primary" id="newNoteBtn" disabled>New</button>
             </div>
           </div>
           <div
@@ -87,10 +98,13 @@
               white-space: nowrap;
             "
           ></div>
+          <div class="sidebar-status" id="connectionStatus" aria-live="polite">
+            <span>⚪</span><span class="label">Not connected</span>
+          </div>
         </div>
         <div class="search-input-wrap sidebar-search-wrap">
           <input type="text" inputmode="search" id="sidebarSearch" placeholder="Filter notes…" />
-          <button class="search-clear is-hidden" id="sidebarSearchClear">✕</button>
+          <button type="button" class="search-clear is-hidden" id="sidebarSearchClear">Clear</button>
         </div>
         <div class="note-list" id="noteList">
           <div class="empty-state">
@@ -112,75 +126,224 @@
 
         <div id="editor" style="display: none; flex-direction: column; flex: 1; overflow: hidden">
           <div class="editor-header">
+            <button
+              type="button"
+              class="menu-btn mobile-menu-btn"
+              id="mobileMenuBtn"
+              aria-label="Toggle sidebar"
+              aria-expanded="false"
+              aria-controls="sidebar"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+              >
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
+            </button>
             <div class="file-info">
               <span class="filename" id="editorFilename">untitled.asc</span
               ><span id="editorDirty" style="visibility: hidden">*</span>
-              <span id="editorStatus" style="font-size: 12px; color: var(--text-muted)"></span>
-              <button class="btn btn-sm" id="previewToggle">👁️ <span class="label">Preview</span></button>
+              <span id="editorStatus" aria-live="polite" style="font-size: 12px; color: var(--text-muted)"></span>
             </div>
             <div class="actions">
               <button
-                class="btn btn-sm btn-warning"
-                id="remoteRefreshBtn"
-                style="visibility: hidden"
-                title="Discard local changes and load the latest version from remote"
+                type="button"
+                class="btn btn-sm editor-action search-btn"
+                id="searchBtn"
+                title="Search"
+                aria-label="Search"
               >
-                ⚠️ <span class="label">Remote</span>
+                <span class="label">Search</span>
               </button>
-              <button class="btn btn-sm" id="discardBtn" style="visibility: hidden">
-                ↩️ <span class="label">Discard</span>
+              <button
+                type="button"
+                class="btn btn-sm editor-action"
+                id="previewToggle"
+                aria-pressed="false"
+                aria-label="Show preview"
+                title="Show preview"
+              >
+                <span class="label">Preview</span>
               </button>
-              <button class="btn btn-sm btn-primary" id="saveBtn">💾 <span class="label">Save</span></button>
-              <button class="btn btn-sm btn-danger" id="deleteBtn">🗑️</button>
+              <button
+                type="button"
+                class="btn btn-sm btn-primary"
+                id="saveBtn"
+                aria-label="Save note"
+                title="Save note"
+              >
+                <span class="label">Save</span>
+              </button>
+              <div class="more-wrap">
+                <button
+                  type="button"
+                  class="btn btn-sm more-btn"
+                  id="moreBtn"
+                  aria-label="More actions"
+                  aria-haspopup="menu"
+                  aria-expanded="false"
+                  aria-controls="moreMenu"
+                  title="More actions"
+                >
+                  ⋯
+                </button>
+                <div class="more-menu" id="moreMenu" role="menu" aria-label="More actions">
+                  <button type="button" class="menu-item mobile-editor-menu" id="menuSearchBtn" role="menuitem">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <circle cx="11" cy="11" r="7" />
+                      <path d="M16 16l5 5" />
+                    </svg>
+                    <span class="label">Search note</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="menu-item mobile-editor-menu"
+                    id="menuPreviewBtn"
+                    role="menuitem"
+                    data-mode="preview"
+                    aria-label="Preview note"
+                  >
+                    <svg class="preview-icon" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                    <svg class="edit-icon" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 20h4L20 8l-4-4L4 16z" />
+                      <path d="M14 6l4 4" />
+                    </svg>
+                    <span class="label">Preview note</span>
+                  </button>
+                  <button type="button" class="menu-item warning" id="remoteRefreshBtn" role="menuitem" hidden>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M6 18h12a4 4 0 0 0 .5-8A6 6 0 0 0 7 9a4.5 4.5 0 0 0-1 9z" />
+                      <path d="M12 11v7M9 15l3 3 3-3" />
+                    </svg>
+                    <span class="label">Load remote version</span>
+                  </button>
+                  <button type="button" class="menu-item" id="discardBtn" role="menuitem" hidden>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M9 14L4 9l5-5" />
+                      <path d="M4 9h9a7 7 0 0 1 0 14h-3" />
+                    </svg>
+                    <span class="label">Discard changes</span>
+                  </button>
+                  <button type="button" class="menu-item danger" id="deleteBtn" role="menuitem" disabled>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 7h16M6 7l1 13h10l1-13M9 7V4h6v3M10 11v6M14 11v6" />
+                    </svg>
+                    <span class="label">Delete note</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
           <div class="editor-toolbar" id="editorToolbar">
-            <button class="btn btn-sm" id="boldBtn"><b>B</b></button>
-            <button class="btn btn-sm" id="italicBtn"><i>I</i></button>
-            <button class="btn btn-sm" id="headingBtn">H</button>
-            <button class="btn btn-sm" id="bulletBtn">•</button>
-            <button class="btn btn-sm" id="taskBtn">☑</button>
-            <button class="btn btn-sm" id="linkBtn" style="padding: 3px 6px; font-size: 11px">🔗</button>
-            <button class="btn btn-sm" id="codeBtn" style="padding: 3px 6px; font-size: 11px">&lt;/&gt;</button>
-            <button class="btn btn-sm" id="quoteBtn">“</button>
-            <button class="btn btn-sm" id="dateBtn" title="Insert date">📅</button>
-            <button class="btn btn-sm" id="formatBtn" title="Format document (Prettier)">✨</button>
-            <button class="btn btn-sm" id="toolbarSearchBtn" title="Search in note">🔍</button>
+            <button type="button" class="btn btn-sm" id="boldBtn" title="Bold" aria-label="Bold">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 5h5.5a3.5 3.5 0 0 1 0 7H7z" />
+                <path d="M7 12h6.5a3.5 3.5 0 0 1 0 7H7z" />
+              </svg>
+            </button>
+            <button type="button" class="btn btn-sm" id="italicBtn" title="Italic" aria-label="Italic">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <line x1="10" y1="5" x2="18" y2="5" />
+                <line x1="6" y1="19" x2="14" y2="19" />
+                <line x1="15" y1="5" x2="9" y2="19" />
+              </svg>
+            </button>
+            <button type="button" class="btn btn-sm" id="headingBtn" title="Heading" aria-label="Heading">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 5v14M17 5v14M7 12h10" />
+              </svg>
+            </button>
+            <button type="button" class="btn btn-sm" id="bulletBtn" title="Bullet list" aria-label="Bullet list">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 6h.01M4 12h.01M4 18h.01M9 6h11M9 12h11M9 18h11" />
+              </svg>
+            </button>
+            <button type="button" class="btn btn-sm" id="taskBtn" title="Task" aria-label="Task">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M9 5h11M9 12h11M9 19h11M3 5l1.5 1.5L7 4M3 12l1.5 1.5L7 11M3 19l1.5 1.5L7 18" />
+              </svg>
+            </button>
+            <button type="button" class="btn btn-sm" id="linkBtn" title="Link" aria-label="Link">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2" />
+                <path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2" />
+              </svg>
+            </button>
+            <button type="button" class="btn btn-sm" id="codeBtn" title="Code block" aria-label="Code block">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <polyline points="8 7 3 12 8 17" />
+                <polyline points="16 7 21 12 16 17" />
+              </svg>
+            </button>
+            <button type="button" class="btn btn-sm" id="quoteBtn" title="Quote" aria-label="Quote">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 17c3 0 5-2 5-5V7H5v5h3c0 2-1 3-3 3z" />
+                <path d="M14 17c3 0 5-2 5-5V7h-5v5h3c0 2-1 3-3 3z" />
+              </svg>
+            </button>
+            <button type="button" class="btn btn-sm" id="dateBtn" title="Insert date" aria-label="Insert date">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="4" y="6" width="16" height="15" rx="2" />
+                <path d="M8 3v6M16 3v6M4 11h16" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm"
+              id="formatBtn"
+              title="Format document (Prettier)"
+              aria-label="Format document"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 20l9-9" />
+                <path d="M13 4l1 3 3 1-3 1-1 3-1-3-3-1 3-1z" />
+                <path d="M19 12l.7 1.3L21 14l-1.3.7L19 16l-.7-1.3L17 14l1.3-.7z" />
+              </svg>
+            </button>
           </div>
           <div class="editor-search" id="editorSearch" style="display: none">
-            <div class="search-input-wrap" style="flex: 1">
+            <div class="search-input-wrap">
               <input type="text" inputmode="search" id="searchInput" placeholder="Search in note…" />
-              <button class="search-clear is-hidden" id="searchInputClear">✕</button>
+              <button type="button" class="search-clear is-hidden" id="searchInputClear" aria-label="Clear search">
+                Clear
+              </button>
             </div>
             <span id="searchCount" class="search-count"></span>
-            <button class="btn btn-sm" id="editorSearchPrev" title="Previous">▲</button>
-            <button class="btn btn-sm" id="editorSearchNext" title="Next">▼</button>
-            <button class="btn btn-sm" id="editorSearchClose" title="Close">✕</button>
+            <button type="button" class="btn btn-sm" id="editorSearchPrev" title="Previous" aria-label="Previous match">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+              <span class="label">Prev</span>
+            </button>
+            <button type="button" class="btn btn-sm" id="editorSearchNext" title="Next" aria-label="Next match">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+              <span class="label">Next</span>
+            </button>
+            <button type="button" class="btn btn-sm" id="editorSearchClose" title="Close" aria-label="Close search">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+              <span class="label">Close</span>
+            </button>
           </div>
           <div class="editor-body">
             <div id="editorHost">
               <textarea id="editorContent" placeholder="Start writing..."></textarea>
             </div>
             <div id="previewContainer" style="display: none">
-              <div
-                style="
-                  display: flex;
-                  align-items: center;
-                  justify-content: space-between;
-                  padding: 6px 12px;
-                  background: var(--surface);
-                  border-bottom: 1px solid var(--border);
-                  flex-shrink: 0;
-                "
-              >
-                <span style="font-size: 12px; color: var(--text-muted); font-weight: 600">Preview</span>
-                <div style="display: flex; align-items: center; gap: 6px">
-                  <button class="btn btn-sm" id="previewSearchBtn" title="Search in preview" style="padding: 2px 8px">
-                    🔍
-                  </button>
-                  <button class="btn btn-sm" id="previewCloseBtn" style="padding: 2px 10px">✕ Close</button>
-                </div>
-              </div>
               <div
                 class="previewSearch"
                 id="previewSearch"
@@ -194,7 +357,7 @@
                   gap: 6px;
                 "
               >
-                <div class="search-input-wrap" style="flex: 1">
+                <div class="search-input-wrap">
                   <input
                     type="text"
                     inputmode="search"
@@ -202,7 +365,7 @@
                     placeholder="Search in preview…"
                     style="
                       min-width: 0;
-                      padding: 4px 24px 4px 8px;
+                      padding: 4px 54px 4px 8px;
                       border: 1px solid var(--border);
                       border-radius: var(--radius);
                       background: var(--bg);
@@ -210,42 +373,45 @@
                       outline: none;
                     "
                   />
-                  <button class="search-clear is-hidden" id="previewSearchClear">✕</button>
+                  <button
+                    type="button"
+                    class="search-clear is-hidden"
+                    id="previewSearchClear"
+                    aria-label="Clear search"
+                  >
+                    Clear
+                  </button>
                 </div>
-                <span
-                  class="search-count"
-                  style="
-                    font-size: 12px;
-                    color: var(--text-muted);
-                    white-space: nowrap;
-                    width: 60px;
-                    text-align: center;
-                    flex-shrink: 0;
-                  "
-                ></span>
+                <span class="search-count"></span>
                 <button
+                  type="button"
                   class="btn btn-sm"
                   id="previewSearchPrev"
                   title="Previous"
-                  style="font-size: 11px; padding: 2px 8px"
+                  aria-label="Previous match"
                 >
-                  ▲
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <polyline points="15 18 9 12 15 6" />
+                  </svg>
+                  <span class="label">Prev</span>
+                </button>
+                <button type="button" class="btn btn-sm" id="previewSearchNext" title="Next" aria-label="Next match">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                  <span class="label">Next</span>
                 </button>
                 <button
-                  class="btn btn-sm"
-                  id="previewSearchNext"
-                  title="Next"
-                  style="font-size: 11px; padding: 2px 8px"
-                >
-                  ▼
-                </button>
-                <button
+                  type="button"
                   class="btn btn-sm"
                   id="previewSearchClose"
                   title="Close"
-                  style="font-size: 11px; padding: 2px 8px"
+                  aria-label="Close search"
                 >
-                  ✕
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M6 6l12 12M18 6L6 18" />
+                  </svg>
+                  <span class="label">Close</span>
                 </button>
               </div>
               <div class="preview" id="previewPane" style="flex: 1; overflow-y: auto"></div>
@@ -257,11 +423,13 @@
 
     <!-- Settings Modal -->
     <div class="modal-overlay" id="settingsModal">
-      <div class="modal">
-        <h2>⚙️ Settings</h2>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <!-- prettier-ignore -->
+        <h2><span id="settingsTitle">⚙️ Settings</span><span class="version" id="appVersion">v0.9.6 <!-- x-release-please-version --></span></h2>
         <div class="tabs">
-          <button class="tab active" data-tab="tab-repo">Repository</button>
-          <button class="tab" data-tab="tab-crypto">Encryption</button>
+          <button type="button" class="tab active" data-tab="tab-repo">Repository</button>
+          <button type="button" class="tab" data-tab="tab-crypto">Encryption</button>
+          <button type="button" class="tab" data-tab="tab-appearance">Appearance</button>
         </div>
 
         <div class="tab-content active" id="tab-repo">
@@ -332,17 +500,29 @@
           </div>
         </div>
 
+        <div class="tab-content" id="tab-appearance">
+          <div class="form-group">
+            <label for="settingsTheme">Theme</label>
+            <select id="settingsTheme">
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+            <div class="hint">System follows your device's light/dark setting.</div>
+          </div>
+        </div>
+
         <div class="form-actions">
-          <button class="btn" id="settingsCancelBtn">Cancel</button>
-          <button class="btn btn-primary" id="settingsSaveBtn">Save & Connect</button>
+          <button type="button" class="btn" id="settingsCancelBtn">Cancel</button>
+          <button type="button" class="btn btn-primary" id="settingsSaveBtn">Save & Connect</button>
         </div>
       </div>
     </div>
 
     <!-- New Note Modal -->
     <div class="modal-overlay" id="newNoteModal">
-      <div class="modal">
-        <h2>🆕 New note</h2>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="newNoteTitle">
+        <h2 id="newNoteTitle">🆕 New note</h2>
         <div class="form-group">
           <label>Note name</label>
           <input type="text" id="newNoteName" placeholder="my-note" autocomplete="off" autocapitalize="off" />
@@ -367,15 +547,15 @@
         </div>
         <div class="field-error" id="newNoteError" style="display: none"></div>
         <div class="form-actions">
-          <button class="btn" id="newNoteCancelBtn">Cancel</button>
-          <button class="btn btn-primary" id="newNoteCreateBtn">Create</button>
+          <button type="button" class="btn" id="newNoteCancelBtn">Cancel</button>
+          <button type="button" class="btn btn-primary" id="newNoteCreateBtn">Create</button>
         </div>
       </div>
     </div>
 
     <!-- Passphrase Modal -->
     <div class="modal-overlay" id="passphraseModal">
-      <div class="modal">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="passphraseTitle">
         <h2 id="passphraseTitle">🔒 Passphrase</h2>
         <div class="form-group">
           <label>Passphrase</label>
@@ -383,8 +563,8 @@
         </div>
         <div class="field-error" id="passphraseError" style="display: none"></div>
         <div class="form-actions">
-          <button class="btn" id="passphraseCancelBtn">Cancel</button>
-          <button class="btn btn-primary" id="passphraseUnlockBtn">Unlock</button>
+          <button type="button" class="btn" id="passphraseCancelBtn">Cancel</button>
+          <button type="button" class="btn btn-primary" id="passphraseUnlockBtn">Unlock</button>
         </div>
       </div>
     </div>

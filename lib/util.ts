@@ -526,7 +526,7 @@ export function formatNoteItem(note: Note, activePath: string | undefined, fileE
   const active = activePath === note.path
   const name = noteDisplayName(note.name, fileExt)
   const cached = !!note.content
-  return `<div class="note-item ${active ? 'active' : ''}" data-path="${escAttr(note.path)}" data-type="file">
+  return `<div class="note-item ${active ? 'active' : ''}" data-path="${escAttr(note.path)}" data-type="file" title="${escAttr(note.path)}">
       <span class="name">📄 ${escHtml(name)}${note.dirty ? ' *' : ''}</span>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
         ${note.dirty ? '<span class="status-badge dirty">unsaved</span>' : ''}
