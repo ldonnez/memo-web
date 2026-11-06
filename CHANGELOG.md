@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/ldonnez/memo-web/compare/v0.9.6...v0.10.0) (2026-11-06)
+
+
+### Features
+
+* improve mobile UI ([a7b1b3a](https://github.com/ldonnez/memo-web/commit/a7b1b3ab9341ab206ff2afd0fd9dc50b7d0cfd2d))
+
 ## [0.9.6](https://github.com/ldonnez/memo-web/compare/v0.9.5...v0.9.6) (2026-10-31)
 
 
