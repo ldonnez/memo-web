@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/ldonnez/memo-web/compare/v0.10.0...v0.10.1) (2026-11-27)
+
+
+### Miscellaneous Chores
+
+* **main:** update dependencies ([0298911](https://github.com/ldonnez/memo-web/commit/0298911f04f3a8db637132dada1038b514e2efa4))
+
 ## [0.10.0](https://github.com/ldonnez/memo-web/compare/v0.9.6...v0.10.0) (2026-11-06)
 
 
